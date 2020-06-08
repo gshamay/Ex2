@@ -3,3 +3,5 @@
 .idea/inspectionProfiles/profiles_settings.xml
 .idea/modules.xml
 .idea/workspace.xml
+data/bgu-rs.zip
+testData/test_file.csv

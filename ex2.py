@@ -1,25 +1,24 @@
 # Alex Danieli 317618718
 # Gil Shamay 033076324
 seed = 415
+
 import time
 import pandas as pd
-import glob
 import zipfile
 from io import StringIO
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Dense
-from keras_pandas import lib
-from keras_pandas.Automater import Automater
 from sklearn.model_selection import train_test_split
+from scipy import stats
 import pickle
+import numpy
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
 # (tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
 ###########################################################################
-# todo: Plan / feature engeneering
+# todo: Plan / feature engeneering\
+#  consider remove first time value or use LSTM
 #  Change the target to categorial and not numerical
 #  helper data for the domain
 #  user -> targets + num seen #user that cliced more then once --> may click it again
@@ -32,9 +31,9 @@ import pickle
 #  emphesize the connection between    user_recs    user_clicks    user_target_recs
 #  one may be removed browser_platform and os_family // (save time..?)
 ###########################################################################
-epochs = 10
+epochs = 1
 test = True
-limitNumOfFilesInTest = 2
+limitNumOfFilesInTest = 1
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -101,27 +100,28 @@ def saveModelToFile(dumpFileFullPath):
 #         handleDataChunk(df)
 #
 #
-# def loadUncompressed(path):
-#     chunksNum = 0
-#     beginTime = time.time()
-#     data = None
-#     pd.read_csv(path, chunksize=20000)
-#     for dataChunk in pd.read_csv(path, chunksize=20000):
-#         if (data is None):
-#             data = dataChunk
-#         else:
-#             data = data.append(dataChunk, ignore_index=True)
-#
-#         if (chunksNum % 10 == 0):
-#             took = time.time() - beginTime
-#             # printDebug(str(chunksNum) + " " + str(took))
-#             # break  # TODO: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
-#
-#         chunksNum += 1
-#
-#     took = time.time() - beginTime
-#     printDebug("LOAD: chunksNum[" + str(chunksNum) + "]took[" + str(took) + "]data[" + str(len(data)) + "]")
-#     return data
+
+def loadUncompressed(path):
+    chunksNum = 0
+    beginTime = time.time()
+    data = None
+    pd.read_csv(path, chunksize=20000)
+    for dataChunk in pd.read_csv(path, chunksize=20000):
+        if (data is None):
+            data = dataChunk
+        else:
+            data = data.append(dataChunk, ignore_index=True)
+
+        if (chunksNum % 10 == 0):
+            took = time.time() - beginTime
+            # printDebug(str(chunksNum) + " " + str(took))
+            # break  # TODO: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
+
+        chunksNum += 1
+
+    took = time.time() - beginTime
+    printDebug("LOAD: chunksNum[" + str(chunksNum) + "]took[" + str(took) + "]data[" + str(len(data)) + "]")
+    return data
 
 
 def readAndRunZipFiles():
@@ -155,9 +155,11 @@ def readAndRunZipFiles():
                 # calcullate error on the validation data
                 testX, testY = transformDataFramesToTFArr(testX, testY)
                 loss, accuracy = model.evaluate(testX, testY)
-                printDebug('Accuracy: %.2f' % (accuracy * 100))
+                testRes = model.predict(testX)
+                # todo: Check that the res data is not <0 or >1 and fix if it does
+                printDebug('Accuracy: %.2f' % (accuracy * 100) + str(stats.describe(testRes)))
                 # test using a few files only
-                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest < numOffiles)):
+                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
                     break
     printToFile("./models/model" + str(runStartTime) + "_lines" + str(totalLines) + ".log")
 
@@ -189,7 +191,6 @@ def fitAnn(df, target):
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                      save_weights_only=True,
                                                      verbose=1)
-
     model.fit(x=X,
               y=y,
               batch_size=64,
@@ -240,12 +241,13 @@ def transformDataFramesToTFArr(df, target):
     df['region'] = pd.Categorical(df['region'])
     df['region'] = df.region.cat.codes
     # printDebug(str(df.info()))
-
-    # option to incluse X and target together
-    # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))
+    # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))# option to include X and target together
     # train_dataset = dataset.shuffle(len(df)).batch(1)
     printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
-    return df.values, target.values
+    if (target is None):
+        return df.values, None
+    else:
+        return df.values, target.values
 
 
 def buileModel():
@@ -260,6 +262,18 @@ def buileModel():
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
 
+def predictOnTest():
+    testFilewName = "./testData/test_file.csv"
+    printDebug("predictOnTest [" + testFilewName + "]")
+    dfTest = loadUncompressed(testFilewName)
+    IDs = dfTest.pop('Id')
+    test = transformDataFramesToTFArr(dfTest, None)
+    Predicted = model.predict(test)
+    PredictedArr = numpy.array(Predicted)
+    res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr)})
+    numpy.savetxt("./models/res.csv", res, delimiter=",")
+
+
 def run():
     global runStartTime, epochNum
     runStartTime = time.time()
@@ -269,6 +283,7 @@ def run():
     for epochNum in range(0, epochs):
         printDebug("epochNum[" + str(epochNum) + "]")
         readAndRunZipFiles()
+    predictOnTest()
 
 
 run()

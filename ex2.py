@@ -14,9 +14,7 @@ from tensorflow.keras.layers import Dense
 from keras_pandas import lib
 from keras_pandas.Automater import Automater
 from sklearn.model_selection import train_test_split
-from keras_pandas.lib import load_titanic
-
-observations = load_titanic()
+import pickle
 
 ###########################################################################
 # the DATA
@@ -67,6 +65,16 @@ def printToFile(fileName):
     file1.close()
 
 
+def saveModelToFile(fileName):
+    ##########################################
+    pickle.dump(model, fileName)
+    ##########################################
+    # Load the Model to be reused - sample code
+    # mySvdload = None
+    # with open(dumpFileFullPath, 'rb') as fp:
+    #     mySvdload = pickle.load(fp)
+
+
 def processDataChunk(dataChunk):
     # todo: check if needed
     # dataChunk.drop(dataChunk.columns[[0]], axis=1, inplace=True)
@@ -110,18 +118,19 @@ def readAndRunUncompressedFiles():
     csvFiles = glob.glob("./data/*.csv");
     for csvfile in csvFiles:
         df = loadUncompressed(csvfile)
-        printDebug(df)
+        # printDebug(df)
         handleDataChunk(df)
 
 
 def readAndRunZipFiles():
+    runStartTime = time.time()
     archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
     totalLines = 0
     numOffiles = 0
-    limitNumOfFiles = 5
+    limitNumOfFiles = 4
+    readBeginTime = time.time()
     for file in archive.filelist:
         if ("part-" in file.filename and ".csv" in file.filename):
-            readBeginTime = time.time()
             fileData = archive.read(file.filename)
             printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
             numOffiles = numOffiles + 1
@@ -132,6 +141,8 @@ def readAndRunZipFiles():
             totalLines = totalLines + df.__len__()
             printDebug(
                 "lines[" + str(df.__len__()) + "]total[" + str(totalLines) + "]numOffiles[" + str(numOffiles) + "]")
+            saveModelToFile("./models/run" + str(runStartTime) + "_part" + str(numOffiles) + ".dump")
+    printToFile("./models/run" + str(runStartTime) + "_lines" + str(totalLines) + ".log")
 
 
 def handleDataChunk(df):
@@ -140,17 +151,17 @@ def handleDataChunk(df):
     # currentTargets = df['target_id_hash'].unique()
 
     df = df.dropna()
-    printDebug(str(df.info()))
+    # printDebug(str(df.info()))
 
     # X, y = transformDataToX_Y_Automater(df)
     X, y = transformDataToX_Y(df)
 
     # fit Model with chunk Data
-    epochs = 15
+    epochs = 4
     batch_size = 10
     fitBeginTime = time.time()
     printDebug("start fit dataChunk epochs[" + str(epochs) + "]batch_size[" + str(batch_size) + "]")
-    model.fit(X, epochs=epochs)
+    model.fit(X, epochs=epochs, use_multiprocessing=True, verbose=2, workers=3)
     printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
 
     loss, accuracy = model.evaluate(X, y)
@@ -234,7 +245,7 @@ def transformDataToX_Y(df):
     df['country_code'] = df.country_code.cat.codes
     df['region'] = pd.Categorical(df['region'])
     df['region'] = df.region.cat.codes
-    printDebug(str(df.info()))
+    # printDebug(str(df.info()))
     target = df.pop('is_click')
     dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))
     train_dataset = dataset.shuffle(len(df)).batch(1)
@@ -244,12 +255,13 @@ def transformDataToX_Y(df):
 
 # define the model
 model = Sequential()
-model.add(Dense(10, input_dim=22, activation='relu'))
-model.add(Dense(10, input_dim=22, activation='relu'))
+model.add(Dense(5, input_dim=22, activation='sigmoid'))
+model.add(Dense(2, activation='sigmoid'))
+model.add(Dense(2, activation='sigmoid'))
 model.add(Dense(1, activation='sigmoid'))
 # compile the keras model
 model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 # read the data and fit
 readAndRunZipFiles()
 
-#todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
+# todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2

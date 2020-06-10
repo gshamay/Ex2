@@ -93,42 +93,35 @@ def saveModelToFile(dumpFileFullPath):
         pickle.dump(model, fp)
 
 
-def processDataChunk(dataChunk):
-    # todo: check if needed
-    # dataChunk.drop(dataChunk.columns[[0]], axis=1, inplace=True)
-    return dataChunk
-
-
-def loadUncompressed(path):
-    chunksNum = 0
-    beginTime = time.time()
-    data = None
-    pd.read_csv(path, chunksize=20000)
-    for dataChunk in pd.read_csv(path, chunksize=20000):
-        dataChunk = processDataChunk(dataChunk)
-        if (data is None):
-            data = dataChunk
-        else:
-            data = data.append(dataChunk, ignore_index=True)
-
-        if (chunksNum % 10 == 0):
-            took = time.time() - beginTime
-            # printDebug(str(chunksNum) + " " + str(took))
-            # break  # TODO: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
-
-        chunksNum += 1
-
-    took = time.time() - beginTime
-    printDebug("LOAD: chunksNum[" + str(chunksNum) + "]took[" + str(took) + "]data[" + str(len(data)) + "]")
-    return data
-
-
-def readAndRunUncompressedFiles():
-    csvFiles = glob.glob("./data/*.csv");
-    for csvfile in csvFiles:
-        df = loadUncompressed(csvfile)
-        # printDebug(df)
-        handleDataChunk(df)
+# def readAndRunUncompressedFiles():
+#     csvFiles = glob.glob("./data/*.csv");
+#     for csvfile in csvFiles:
+#         df = loadUncompressed(csvfile)
+#         # printDebug(df)
+#         handleDataChunk(df)
+#
+#
+# def loadUncompressed(path):
+#     chunksNum = 0
+#     beginTime = time.time()
+#     data = None
+#     pd.read_csv(path, chunksize=20000)
+#     for dataChunk in pd.read_csv(path, chunksize=20000):
+#         if (data is None):
+#             data = dataChunk
+#         else:
+#             data = data.append(dataChunk, ignore_index=True)
+#
+#         if (chunksNum % 10 == 0):
+#             took = time.time() - beginTime
+#             # printDebug(str(chunksNum) + " " + str(took))
+#             # break  # TODO: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
+#
+#         chunksNum += 1
+#
+#     took = time.time() - beginTime
+#     printDebug("LOAD: chunksNum[" + str(chunksNum) + "]took[" + str(took) + "]data[" + str(len(data)) + "]")
+#     return data
 
 
 def readAndRunZipFiles():
@@ -137,7 +130,7 @@ def readAndRunZipFiles():
     totalLines = 0
     for file in archive.filelist:
         if ("part-" in file.filename and ".csv" in file.filename):
-            df = readCSV(archive, file)
+            df = readCSVFromZip(archive, file)
             df = df.dropna()  # todo: do we need this?
             target = df.pop('is_click')
             trainX = None
@@ -169,7 +162,7 @@ def readAndRunZipFiles():
     printToFile("./models/model" + str(runStartTime) + "_lines" + str(totalLines) + ".log")
 
 
-def readCSV(archive, file):
+def readCSVFromZip(archive, file):
     global numOffiles
     readBeginTime = time.time()
     fileData = archive.read(file.filename)
@@ -215,54 +208,6 @@ def keepStatisticalData():
     # statistical data
     # currentUsers = df['user_id_hash'].unique()
     # currentTargets = df['target_id_hash'].unique()
-
-
-output_var = 'is_click'
-data_type_dict = {
-    # numerical cause # ValueError: all the input array dimensions for the concatenation axis must match exactly,
-    #       but along dimension 0, the array at index 0 has size 462734 and the array at index 8 has size 462735
-
-    # 'numerical': [
-    #     # 'page_view_start_time',
-    #     # 'empiric_calibrated_recs',
-    #     # 'empiric_clicks',
-    #     # 'user_recs',
-    #     # 'user_clicks',
-    #     # 'user_target_recs',
-    #     # 'time_of_day',
-    #     # 'gmt_offset'
-    # ],
-    'categorical': [
-        'user_id_hash',
-        'target_id_hash',
-        'syndicator_id_hash',
-        'campaign_id_hash',
-        'target_item_taxonomy',
-        'placement_id_hash',
-        'publisher_id_hash',
-        'source_id_hash',
-        'source_item_type',
-        'browser_platform',
-        'os_family',
-        'country_code',
-        'region',
-        'day_of_week',
-        'is_click']}
-
-
-def transformDataToX_Y_Automater(df):
-    # Transform the data set, using keras_pandas
-    fitBeginTime = time.time()
-    # Create and fit Automater
-    automater = Automater(data_type_dict=data_type_dict, output_var=output_var)
-    printDebug("start Automater.fit")
-    automater.fit(df)
-    printDebug("Automater.fit took[" + str(time.time() - fitBeginTime) + "]")
-    printDebug("start Automater.transform")
-    fitBeginTime = time.time()
-    X, y = automater.transform(df, df_out=False)
-    printDebug("Automater.transform took[" + str(time.time() - fitBeginTime) + "]")
-    return X, y
 
 
 def transformDataFramesToTFArr(df, target):

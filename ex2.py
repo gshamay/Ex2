@@ -48,7 +48,6 @@ observations = load_titanic()
 #  22  is_click                 462734 non-null  float64
 # dtypes: float64(6), int64(5), object(12)
 
-    #     # 'user_clicks',
 ###########################################
 stringToPrintToFile = ""
 

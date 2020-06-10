@@ -50,16 +50,18 @@ observations = load_titanic()
 
 output_var = 'is_click'
 data_type_dict = {
-    'numerical': [
-        # 'page_view_start_time',
-        # 'empiric_calibrated_recs',
-        # 'empiric_clicks',
-        # 'user_recs',
-        # 'user_clicks',
-        #'user_target_recs',
-        # 'time_of_day',
-        #'gmt_offset'
-    ],
+    # numerical cause # ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 462734 and the array at index 8 has size 462735
+
+    # 'numerical': [
+    #     # 'page_view_start_time',
+    #     # 'empiric_calibrated_recs',
+    #     # 'empiric_clicks',
+    #     # 'user_recs',
+    #     # 'user_clicks',
+    #     # 'user_target_recs',
+    #     # 'time_of_day',
+    #     # 'gmt_offset'
+    # ],
     'categorical': [
         'user_id_hash',
         'target_id_hash',
@@ -174,33 +176,22 @@ def handleDataChunk(df):
     auto = Automater(data_type_dict=data_type_dict, output_var=output_var)
 
     # fit Model with chunk Data
-    # ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 462734 and the array at index 8 has size 462735
-    # ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 462717 and the array at index 8 has size 462718
-    df = df.drop(columns=[
-        'empiric_clicks',
-        # 'target_item_taxonomy',
-        # 'placement_id_hash',
-        'empiric_calibrated_recs',
-        'page_view_start_time',
-        'user_recs',
-        'user_clicks',
-        'user_target_recs',
-        # 'publisher_id_hash',
-        # 'source_id_hash',
-        # 'syndicator_id_hash',
-        # 'campaign_id_hash',
-        # 'user_id_hash',
-        # 'target_id_hash',
-        'time_of_day',
-        'gmt_offset'
-    ])
     df = df.dropna()
     print(df.info())
 
+    printDebug("start auto.fit")
     auto.fit(df)
-
+    printDebug("auto.fit took[" + str(time.time() - fitBeginTime) + "]")
+    printDebug("start auto.transform")
+    fitBeginTime = time.time()
     X, y = auto.transform(df, df_out=False)
-    model.fit(X, y, epochs=150, batch_size=10)
+    printDebug("auto.transform took[" + str(time.time() - fitBeginTime) + "]")
+
+    fitBeginTime = time.time()
+    epochs = 1
+    batch_size = 1
+    printDebug("start fit dataChunk epochs[" + epochs + "]batch_size[" + batch_size + "]")
+    model.fit(X, y, epochs=epochs, batch_size=batch_size)
     printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
     loss, accuracy = model.evaluate(X, y)
     print('Accuracy: %.2f' % (accuracy * 100))
@@ -208,6 +199,7 @@ def handleDataChunk(df):
 
 # define the model
 model = Sequential()
+model.add(Dense(10, input_dim=22, activation='relu'))
 model.add(Dense(10, input_dim=22, activation='relu'))
 model.add(Dense(1, activation='sigmoid'))
 # compile the keras model

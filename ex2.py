@@ -193,6 +193,11 @@ def fitAnn(df, target):
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                      save_weights_only=True,
                                                      verbose=1)
+    # todo: Consider changing the model save to this 
+    # # saving the model in tensorflow format
+    # model.save('./MyModel_tf', save_format='tf')
+    # # loading the saved model
+    # loaded_model = tf.keras.models.load_model('./MyModel_tf')
     model.fit(x=X,
               y=y,
               batch_size=64,

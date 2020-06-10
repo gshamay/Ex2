@@ -31,8 +31,10 @@ import numpy
 #  emphesize the connection between    user_recs    user_clicks    user_target_recs
 #  one may be removed browser_platform and os_family // (save time..?)
 ###########################################################################
-epochs = 1
-test = True
+# parameters for Debug
+# Todo: in Debug - change here
+epochs = 50
+test = False
 limitNumOfFilesInTest = 1
 ###########################################################################
 # the DATA
@@ -157,7 +159,7 @@ def readAndRunZipFiles():
                 loss, accuracy = model.evaluate(testX, testY)
                 testRes = model.predict(testX)
                 # todo: Check that the res data is not <0 or >1 and fix if it does
-                printDebug('Accuracy: %.2f' % (accuracy * 100) + str(stats.describe(testRes)))
+                printDebug('Accuracy:[ %.2f]' % (accuracy * 100) + str(stats.describe(testRes)))
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
                     break
@@ -253,7 +255,8 @@ def transformDataFramesToTFArr(df, target):
 def buileModel():
     global model
     model = Sequential()
-    model.add(Dense(15, input_dim=22, activation='sigmoid'))
+    model.add(Dense(22, input_dim=22, activation='sigmoid'))
+    model.add(Dense(15, activation='sigmoid'))
     model.add(Dense(10, activation='sigmoid'))
     model.add(Dense(7, activation='sigmoid'))
     model.add(Dense(5, activation='sigmoid'))
@@ -270,8 +273,10 @@ def predictOnTest():
     test = transformDataFramesToTFArr(dfTest, None)
     Predicted = model.predict(test)
     PredictedArr = numpy.array(Predicted)
-    res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr)})
-    numpy.savetxt("./models/res.csv", res, delimiter=",")
+    res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr)}, columns=['Id', 'Predicted'])
+    res.Id = res.Id.astype(int)
+    resFileName = "./models/model_" + str(runStartTime) + "_res.csv"
+    res.to_csv(resFileName, header=True, index=False)
 
 
 def run():

@@ -48,37 +48,7 @@ observations = load_titanic()
 #  22  is_click                 462734 non-null  float64
 # dtypes: float64(6), int64(5), object(12)
 
-output_var = 'is_click'
-data_type_dict = {
-    # numerical cause # ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 462734 and the array at index 8 has size 462735
-
-    # 'numerical': [
-    #     # 'page_view_start_time',
-    #     # 'empiric_calibrated_recs',
-    #     # 'empiric_clicks',
-    #     # 'user_recs',
     #     # 'user_clicks',
-    #     # 'user_target_recs',
-    #     # 'time_of_day',
-    #     # 'gmt_offset'
-    # ],
-    'categorical': [
-        'user_id_hash',
-        'target_id_hash',
-        'syndicator_id_hash',
-        'campaign_id_hash',
-        'target_item_taxonomy',
-        'placement_id_hash',
-        'publisher_id_hash',
-        'source_id_hash',
-
-        'source_item_type',
-        'browser_platform',
-        'os_family',
-        'country_code',
-        'region',
-        'day_of_week',
-        'is_click']}
 ###########################################
 stringToPrintToFile = ""
 
@@ -118,7 +88,7 @@ def loadUncompressed(path):
 
         if (chunksNum % 10 == 0):
             took = time.time() - beginTime
-            # print(str(chunksNum) + " " + str(took))
+            # printDebug(str(chunksNum) + " " + str(took))
             # break  # TODO: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
 
         chunksNum += 1
@@ -141,7 +111,7 @@ def readAndRunUncompressedFiles():
     csvFiles = glob.glob("./data/*.csv");
     for csvfile in csvFiles:
         df = loadUncompressed(csvfile)
-        print(df)
+        printDebug(df)
         handleDataChunk(df)
 
 
@@ -170,31 +140,107 @@ def handleDataChunk(df):
     # currentUsers = df['user_id_hash'].unique()
     # currentTargets = df['target_id_hash'].unique()
 
+    df = df.dropna()
+    printDebug(str(df.info()))
+
+    # X, y = transformDataToX_Y_Automater(df)
+    X, y = transformDataToX_Y(df)
+
+    # fit Model with chunk Data
+    epochs = 15
+    batch_size = 10
+    fitBeginTime = time.time()
+    printDebug("start fit dataChunk epochs[" + str(epochs) + "]batch_size[" + str(batch_size) + "]")
+    model.fit(X, epochs=epochs)
+    printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
+
+    loss, accuracy = model.evaluate(X, y)
+    printDebug('Accuracy: %.2f' % (accuracy * 100))
+
+
+output_var = 'is_click'
+data_type_dict = {
+    # numerical cause # ValueError: all the input array dimensions for the concatenation axis must match exactly,
+    #       but along dimension 0, the array at index 0 has size 462734 and the array at index 8 has size 462735
+
+    # 'numerical': [
+    #     # 'page_view_start_time',
+    #     # 'empiric_calibrated_recs',
+    #     # 'empiric_clicks',
+    #     # 'user_recs',
+    #     # 'user_clicks',
+    #     # 'user_target_recs',
+    #     # 'time_of_day',
+    #     # 'gmt_offset'
+    # ],
+    'categorical': [
+        'user_id_hash',
+        'target_id_hash',
+        'syndicator_id_hash',
+        'campaign_id_hash',
+        'target_item_taxonomy',
+        'placement_id_hash',
+        'publisher_id_hash',
+        'source_id_hash',
+        'source_item_type',
+        'browser_platform',
+        'os_family',
+        'country_code',
+        'region',
+        'day_of_week',
+        'is_click']}
+
+
+def transformDataToX_Y_Automater(df):
     # Transform the data set, using keras_pandas
     fitBeginTime = time.time()
     # Create and fit Automater
-    auto = Automater(data_type_dict=data_type_dict, output_var=output_var)
-
-    # fit Model with chunk Data
-    df = df.dropna()
-    print(df.info())
-
-    printDebug("start auto.fit")
-    auto.fit(df)
-    printDebug("auto.fit took[" + str(time.time() - fitBeginTime) + "]")
-    printDebug("start auto.transform")
+    automater = Automater(data_type_dict=data_type_dict, output_var=output_var)
+    printDebug("start Automater.fit")
+    automater.fit(df)
+    printDebug("Automater.fit took[" + str(time.time() - fitBeginTime) + "]")
+    printDebug("start Automater.transform")
     fitBeginTime = time.time()
-    X, y = auto.transform(df, df_out=False)
-    printDebug("auto.transform took[" + str(time.time() - fitBeginTime) + "]")
+    X, y = automater.transform(df, df_out=False)
+    printDebug("Automater.transform took[" + str(time.time() - fitBeginTime) + "]")
+    return X, y
 
+
+def transformDataToX_Y(df):
+    # https://www.tensorflow.org/tutorials/load_data/pandas_dataframe
+    # Convert column which is an object in the dataframe to a discrete numerical value.
+    # todo:     A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
     fitBeginTime = time.time()
-    epochs = 1
-    batch_size = 1
-    printDebug("start fit dataChunk epochs[" + epochs + "]batch_size[" + batch_size + "]")
-    model.fit(X, y, epochs=epochs, batch_size=batch_size)
-    printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
-    loss, accuracy = model.evaluate(X, y)
-    print('Accuracy: %.2f' % (accuracy * 100))
+    df['user_id_hash'] = pd.Categorical(df['user_id_hash'])
+    df['user_id_hash'] = df.user_id_hash.cat.codes
+    df['target_id_hash'] = pd.Categorical(df['target_id_hash'])
+    df['target_id_hash'] = df.target_id_hash.cat.codes
+    df['syndicator_id_hash'] = pd.Categorical(df['syndicator_id_hash'])
+    df['syndicator_id_hash'] = df.syndicator_id_hash.cat.codes
+    df['campaign_id_hash'] = pd.Categorical(df['campaign_id_hash'])
+    df['campaign_id_hash'] = df.campaign_id_hash.cat.codes
+    df['target_item_taxonomy'] = pd.Categorical(df['target_item_taxonomy'])
+    df['target_item_taxonomy'] = df.target_item_taxonomy.cat.codes
+    df['placement_id_hash'] = pd.Categorical(df['placement_id_hash'])
+    df['placement_id_hash'] = df.placement_id_hash.cat.codes
+    df['publisher_id_hash'] = pd.Categorical(df['publisher_id_hash'])
+    df['publisher_id_hash'] = df.publisher_id_hash.cat.codes
+    df['source_id_hash'] = pd.Categorical(df['source_id_hash'])
+    df['source_id_hash'] = df.source_id_hash.cat.codes
+    df['source_item_type'] = pd.Categorical(df['source_item_type'])
+    df['source_item_type'] = df.source_item_type.cat.codes
+    df['browser_platform'] = pd.Categorical(df['browser_platform'])
+    df['browser_platform'] = df.browser_platform.cat.codes
+    df['country_code'] = pd.Categorical(df['country_code'])
+    df['country_code'] = df.country_code.cat.codes
+    df['region'] = pd.Categorical(df['region'])
+    df['region'] = df.region.cat.codes
+    printDebug(str(df.info()))
+    target = df.pop('is_click')
+    dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))
+    train_dataset = dataset.shuffle(len(df)).batch(1)
+    printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
+    return train_dataset, target
 
 
 # define the model
@@ -206,3 +252,5 @@ model.add(Dense(1, activation='sigmoid'))
 model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 # read the data and fit
 readAndRunZipFiles()
+
+#todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2

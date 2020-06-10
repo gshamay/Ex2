@@ -6,11 +6,20 @@ import pandas as pd
 import glob
 import zipfile
 from io import StringIO
-
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Dense
+from keras_pandas import lib
+from keras_pandas.Automater import Automater
+from sklearn.model_selection import train_test_split
+from keras_pandas.lib import load_titanic
 
-#the DATA
+observations = load_titanic()
+
+###########################################################################
+# the DATA
 # Data columns (total 23 columns):
 #  #   Column                   Non-Null Count   Dtype
 # ---  ------                   --------------   -----
@@ -39,7 +48,36 @@ from tensorflow import keras
 #  22  is_click                 462734 non-null  float64
 # dtypes: float64(6), int64(5), object(12)
 
+output_var = 'is_click'
+data_type_dict = {
+    'numerical': [
+        # 'page_view_start_time',
+        # 'empiric_calibrated_recs',
+        # 'empiric_clicks',
+        # 'user_recs',
+        # 'user_clicks',
+        #'user_target_recs',
+        # 'time_of_day',
+        #'gmt_offset'
+    ],
+    'categorical': [
+        'user_id_hash',
+        'target_id_hash',
+        'syndicator_id_hash',
+        'campaign_id_hash',
+        'target_item_taxonomy',
+        'placement_id_hash',
+        'publisher_id_hash',
+        'source_id_hash',
 
+        'source_item_type',
+        'browser_platform',
+        'os_family',
+        'country_code',
+        'region',
+        'day_of_week',
+        'is_click']}
+###########################################
 stringToPrintToFile = ""
 
 
@@ -64,7 +102,7 @@ def processDataChunk(dataChunk):
     return dataChunk
 
 
-def load(path):
+def loadUncompressed(path):
     chunksNum = 0
     beginTime = time.time()
     data = None
@@ -100,7 +138,7 @@ def load(path):
 def readAndRunUncompressedFiles():
     csvFiles = glob.glob("./data/*.csv");
     for csvfile in csvFiles:
-        df = load(csvfile)
+        df = loadUncompressed(csvfile)
         print(df)
         handleDataChunk(df)
 
@@ -112,7 +150,9 @@ def readAndRunZipFiles():
     limitNumOfFiles = 5
     for file in archive.filelist:
         if ("part-" in file.filename and ".csv" in file.filename):
+            readBeginTime = time.time()
             fileData = archive.read(file.filename)
+            printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
             numOffiles = numOffiles + 1
             s = str(fileData, 'utf-8')
             data = StringIO(s)
@@ -124,9 +164,53 @@ def readAndRunZipFiles():
 
 
 def handleDataChunk(df):
-    users = df['user_id_hash'].unique()
-    targets = df['target_id_hash'].unique()
+    # keep statistical data
+    # currentUsers = df['user_id_hash'].unique()
+    # currentTargets = df['target_id_hash'].unique()
 
-    print()
+    # Transform the data set, using keras_pandas
+    fitBeginTime = time.time()
+    # Create and fit Automater
+    auto = Automater(data_type_dict=data_type_dict, output_var=output_var)
 
+    # fit Model with chunk Data
+    # ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 462734 and the array at index 8 has size 462735
+    # ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 462717 and the array at index 8 has size 462718
+    df = df.drop(columns=[
+        'empiric_clicks',
+        # 'target_item_taxonomy',
+        # 'placement_id_hash',
+        'empiric_calibrated_recs',
+        'page_view_start_time',
+        'user_recs',
+        'user_clicks',
+        'user_target_recs',
+        # 'publisher_id_hash',
+        # 'source_id_hash',
+        # 'syndicator_id_hash',
+        # 'campaign_id_hash',
+        # 'user_id_hash',
+        # 'target_id_hash',
+        'time_of_day',
+        'gmt_offset'
+    ])
+    df = df.dropna()
+    print(df.info())
+
+    auto.fit(df)
+
+    X, y = auto.transform(df, df_out=False)
+    model.fit(X, y, epochs=150, batch_size=10)
+    printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
+    loss, accuracy = model.evaluate(X, y)
+    print('Accuracy: %.2f' % (accuracy * 100))
+
+
+# define the model
+model = Sequential()
+model.add(Dense(10, input_dim=22, activation='relu'))
+model.add(Dense(1, activation='sigmoid'))
+# compile the keras model
+model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+# read the data and fit
 readAndRunZipFiles()

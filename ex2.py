@@ -16,9 +16,11 @@ from keras_pandas.Automater import Automater
 from sklearn.model_selection import train_test_split
 import pickle
 
-# print(tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
+# todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
+# (tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
 ###########################################################################
 # todo: Plan / feature engeneering
+#  Change the target to categorial and not numerical
 #  helper data for the domain
 #  user -> targets + num seen #user that cliced more then once --> may click it again
 #  target -> total seen + time # taret that is popular (and seen lately ? )
@@ -30,9 +32,9 @@ import pickle
 #  emphesize the connection between    user_recs    user_clicks    user_target_recs
 #  one may be removed browser_platform and os_family // (save time..?)
 ###########################################################################
-epochs = 1
+epochs = 10
 test = True
-limitNumOfFiles = 2
+limitNumOfFilesInTest = 2
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -64,9 +66,13 @@ limitNumOfFiles = 2
 # dtypes: float64(6), int64(5), object(12)
 
 ###########################################
+# globals
 stringToPrintToFile = ""
+numOffiles = 0
+model = None
 
 
+###########################################
 def printDebug(str):
     global stringToPrintToFile
     print(str)
@@ -125,22 +131,13 @@ def readAndRunUncompressedFiles():
         handleDataChunk(df)
 
 
-numOffiles = 0
-
-
 def readAndRunZipFiles():
     global numOffiles
     archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
     totalLines = 0
-    readBeginTime = time.time()
     for file in archive.filelist:
         if ("part-" in file.filename and ".csv" in file.filename):
-            fileData = archive.read(file.filename)
-            printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
-            numOffiles = numOffiles + 1
-            s = str(fileData, 'utf-8')
-            data = StringIO(s)
-            df = pd.read_csv(data)
+            df = readCSV(archive, file)
             df = df.dropna()  # todo: do we need this?
             target = df.pop('is_click')
             trainX = None
@@ -148,21 +145,40 @@ def readAndRunZipFiles():
             trainY = None
             testY = None
             if (test):
-                print("test mode - split train/validations")
+                printDebug("test mode - split train/validations")
                 trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.25, random_state=seed)
             else:
                 trainX = df
                 trainY = target
             handleDataChunk(trainX, trainY)
-            totalLines = totalLines + df.__len__()
             printDebug(
-                "lines[" + str(df.__len__()) + "]total[" + str(totalLines) + "]numOffiles[" + str(numOffiles) + "]")
+                "handled lines[" + str(df.__len__()) + "]"
+                + "total[" + str(totalLines) + "]"
+                + "numOffiles[" + str(numOffiles) + "]"
+                + "epochNum[" + str(epochNum) + "]"
+            )
+            totalLines = totalLines + df.__len__()
             if (test):
                 # calcullate error on the validation data
-                # test using a single file
-                if ((limitNumOfFiles > 0) and (limitNumOfFiles < numOffiles)):
+                testX, testY = transformDataFramesToTFArr(testX, testY)
+                loss, accuracy = model.evaluate(testX, testY)
+                printDebug('Accuracy: %.2f' % (accuracy * 100))
+                # test using a few files only
+                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest < numOffiles)):
                     break
-    printToFile("./models/run" + str(runStartTime) + "_lines" + str(totalLines) + ".log")
+    printToFile("./models/model" + str(runStartTime) + "_lines" + str(totalLines) + ".log")
+
+
+def readCSV(archive, file):
+    global numOffiles
+    readBeginTime = time.time()
+    fileData = archive.read(file.filename)
+    printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
+    numOffiles = numOffiles + 1
+    s = str(fileData, 'utf-8')
+    data = StringIO(s)
+    df = pd.read_csv(data)
+    return df
 
 
 def handleDataChunk(df, target):
@@ -171,7 +187,7 @@ def handleDataChunk(df, target):
 
 
 def fitAnn(df, target):
-    X, y = transformDataToX_Y(df, target)
+    X, y = transformDataFramesToTFArr(df, target)
     # fit Model with chunk Data
     fitBeginTime = time.time()
     printDebug("start fit dataChunk epochs[" + str(epochs) + "]")
@@ -181,7 +197,14 @@ def fitAnn(df, target):
                                                      save_weights_only=True,
                                                      verbose=1)
 
-    model.fit(x=X, y=y, epochs=epochs, use_multiprocessing=True, verbose=2, workers=3, callbacks=[cp_callback])
+    model.fit(x=X,
+              y=y,
+              batch_size=64,
+              epochs=1,  # we fdo the epochs on the overall Data
+              use_multiprocessing=True,
+              verbose=2,
+              workers=3,
+              callbacks=[cp_callback])
     printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
     # loss, accuracy = model.evaluate(X, y)
     # printDebug('Accuracy: %.2f' % (accuracy * 100))
@@ -242,7 +265,7 @@ def transformDataToX_Y_Automater(df):
     return X, y
 
 
-def transformDataToX_Y(df, target):
+def transformDataFramesToTFArr(df, target):
     # https://www.tensorflow.org/tutorials/load_data/pandas_dataframe
     # Convert column which is an object in the dataframe to a discrete numerical value.
     # todo:     A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
@@ -280,20 +303,29 @@ def transformDataToX_Y(df, target):
     return df.values, target.values
 
 
-# define the model
-runStartTime = time.time()
-model = Sequential()
-model.add(Dense(10, input_dim=22, activation='sigmoid'))
-model.add(Dense(5, activation='sigmoid'))
-model.add(Dense(5, activation='sigmoid'))
-model.add(Dense(5, activation='sigmoid'))
-model.add(Dense(1, activation='sigmoid'))
-# compile the keras model
-model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
-# read the data and fit
-readAndRunZipFiles()
+def buileModel():
+    global model
+    model = Sequential()
+    model.add(Dense(15, input_dim=22, activation='sigmoid'))
+    model.add(Dense(10, activation='sigmoid'))
+    model.add(Dense(7, activation='sigmoid'))
+    model.add(Dense(5, activation='sigmoid'))
+    model.add(Dense(1, activation='sigmoid'))
+    # compile the keras model
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
-# todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
 
+def run():
+    global runStartTime, epochNum
+    runStartTime = time.time()
+    buileModel()
+    # read the data and fit
+    epochNum = 0
+    for epochNum in range(0, epochs):
+        printDebug("epochNum[" + str(epochNum) + "]")
+        readAndRunZipFiles()
+
+
+run()
 printDebug(" ---- Done ---- ")
 exit(0)

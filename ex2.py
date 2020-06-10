@@ -1,6 +1,6 @@
 # Alex Danieli 317618718
 # Gil Shamay 033076324
-
+seed = 415
 import time
 import pandas as pd
 import glob
@@ -16,6 +16,23 @@ from keras_pandas.Automater import Automater
 from sklearn.model_selection import train_test_split
 import pickle
 
+# print(tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
+###########################################################################
+# todo: Plan / feature engeneering
+#  helper data for the domain
+#  user -> targets + num seen #user that cliced more then once --> may click it again
+#  target -> total seen + time # taret that is popular (and seen lately ? )
+#  user -> clics ratio # is teh user clicking/ can we expect him to click
+#  target + data --> Target CF
+#  session based mechanism
+#  date/time  --> date features
+#  time + gmt_offset --> new time ; remove GMT // (save time.. ?)
+#  emphesize the connection between    user_recs    user_clicks    user_target_recs
+#  one may be removed browser_platform and os_family // (save time..?)
+###########################################################################
+epochs = 1
+test = True
+limitNumOfFiles = 2
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -65,14 +82,9 @@ def printToFile(fileName):
     file1.close()
 
 
-def saveModelToFile(fileName):
-    ##########################################
-    pickle.dump(model, fileName)
-    ##########################################
-    # Load the Model to be reused - sample code
-    # mySvdload = None
-    # with open(dumpFileFullPath, 'rb') as fp:
-    #     mySvdload = pickle.load(fp)
+def saveModelToFile(dumpFileFullPath):
+    with open(dumpFileFullPath, 'wb') as fp:
+        pickle.dump(model, fp)
 
 
 def processDataChunk(dataChunk):
@@ -105,15 +117,6 @@ def loadUncompressed(path):
     return data
 
 
-# helper data for the domain
-# user -> targets + num seen #user that cliced more then once --> may click it again
-# target -> total seen + time # taret that is popular (and seen lately ? )
-# user -> clics ratio # is teh user clicking/ can we expect him to click
-# target + data --> Target CF
-# session based mechanism
-# date/time  --> date features
-
-
 def readAndRunUncompressedFiles():
     csvFiles = glob.glob("./data/*.csv");
     for csvfile in csvFiles:
@@ -122,12 +125,13 @@ def readAndRunUncompressedFiles():
         handleDataChunk(df)
 
 
+numOffiles = 0
+
+
 def readAndRunZipFiles():
-    runStartTime = time.time()
+    global numOffiles
     archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
     totalLines = 0
-    numOffiles = 0
-    limitNumOfFiles = 4
     readBeginTime = time.time()
     for file in archive.filelist:
         if ("part-" in file.filename and ".csv" in file.filename):
@@ -137,35 +141,57 @@ def readAndRunZipFiles():
             s = str(fileData, 'utf-8')
             data = StringIO(s)
             df = pd.read_csv(data)
-            handleDataChunk(df)
+            df = df.dropna()  # todo: do we need this?
+            target = df.pop('is_click')
+            trainX = None
+            trainY = None
+            trainY = None
+            testY = None
+            if (test):
+                print("test mode - split train/validations")
+                trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.25, random_state=seed)
+            else:
+                trainX = df
+                trainY = target
+            handleDataChunk(trainX, trainY)
             totalLines = totalLines + df.__len__()
             printDebug(
                 "lines[" + str(df.__len__()) + "]total[" + str(totalLines) + "]numOffiles[" + str(numOffiles) + "]")
-            saveModelToFile("./models/run" + str(runStartTime) + "_part" + str(numOffiles) + ".dump")
+            if (test):
+                # calcullate error on the validation data
+                # test using a single file
+                if ((limitNumOfFiles > 0) and (limitNumOfFiles < numOffiles)):
+                    break
     printToFile("./models/run" + str(runStartTime) + "_lines" + str(totalLines) + ".log")
 
 
-def handleDataChunk(df):
-    # keep statistical data
+def handleDataChunk(df, target):
+    keepStatisticalData()
+    fitAnn(df, target)
+
+
+def fitAnn(df, target):
+    X, y = transformDataToX_Y(df, target)
+    # fit Model with chunk Data
+    fitBeginTime = time.time()
+    printDebug("start fit dataChunk epochs[" + str(epochs) + "]")
+    checkpoint_path = "./models/model_" + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
+    # Create a callback that saves the model's weights
+    cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+                                                     save_weights_only=True,
+                                                     verbose=1)
+
+    model.fit(x=X, y=y, epochs=epochs, use_multiprocessing=True, verbose=2, workers=3, callbacks=[cp_callback])
+    printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
+    # loss, accuracy = model.evaluate(X, y)
+    # printDebug('Accuracy: %.2f' % (accuracy * 100))
+
+
+def keepStatisticalData():
+    pass
+    # statistical data
     # currentUsers = df['user_id_hash'].unique()
     # currentTargets = df['target_id_hash'].unique()
-
-    df = df.dropna()
-    # printDebug(str(df.info()))
-
-    # X, y = transformDataToX_Y_Automater(df)
-    X, y = transformDataToX_Y(df)
-
-    # fit Model with chunk Data
-    epochs = 4
-    batch_size = 10
-    fitBeginTime = time.time()
-    printDebug("start fit dataChunk epochs[" + str(epochs) + "]batch_size[" + str(batch_size) + "]")
-    model.fit(X, epochs=epochs, use_multiprocessing=True, verbose=2, workers=3)
-    printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
-
-    loss, accuracy = model.evaluate(X, y)
-    printDebug('Accuracy: %.2f' % (accuracy * 100))
 
 
 output_var = 'is_click'
@@ -216,7 +242,7 @@ def transformDataToX_Y_Automater(df):
     return X, y
 
 
-def transformDataToX_Y(df):
+def transformDataToX_Y(df, target):
     # https://www.tensorflow.org/tutorials/load_data/pandas_dataframe
     # Convert column which is an object in the dataframe to a discrete numerical value.
     # todo:     A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
@@ -246,18 +272,21 @@ def transformDataToX_Y(df):
     df['region'] = pd.Categorical(df['region'])
     df['region'] = df.region.cat.codes
     # printDebug(str(df.info()))
-    target = df.pop('is_click')
-    dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))
-    train_dataset = dataset.shuffle(len(df)).batch(1)
+
+    # option to incluse X and target together
+    # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))
+    # train_dataset = dataset.shuffle(len(df)).batch(1)
     printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
-    return train_dataset, target
+    return df.values, target.values
 
 
 # define the model
+runStartTime = time.time()
 model = Sequential()
-model.add(Dense(5, input_dim=22, activation='sigmoid'))
-model.add(Dense(2, activation='sigmoid'))
-model.add(Dense(2, activation='sigmoid'))
+model.add(Dense(10, input_dim=22, activation='sigmoid'))
+model.add(Dense(5, activation='sigmoid'))
+model.add(Dense(5, activation='sigmoid'))
+model.add(Dense(5, activation='sigmoid'))
 model.add(Dense(1, activation='sigmoid'))
 # compile the keras model
 model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
@@ -265,3 +294,6 @@ model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy']
 readAndRunZipFiles()
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
+
+printDebug(" ---- Done ---- ")
+exit(0)

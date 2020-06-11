@@ -18,7 +18,8 @@ import numpy
 # (tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
 ###########################################################################
 # todo: Plan / feature engeneering\
-#  consider remove first time value or use LSTM
+#  DONE - consider remove first time value
+#  consider use LSTM
 #  Change the target to categorial and not numerical
 #  helper data for the domain
 #  user -> targets + num seen #user that cliced more then once --> may click it again

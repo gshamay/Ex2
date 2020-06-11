@@ -35,6 +35,7 @@ import numpy
 # parameters for Debug
 # Todo: in Debug - change here
 epochs = 10
+test = True
 test = False
 limitNumOfFilesInTest = 1
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
@@ -73,8 +74,11 @@ layers = [15, 10, 5]
 # globals
 stringToPrintToFile = ""
 numOffiles = 0
+numOffilesInEpoch = 0
 model = None
-
+epochNum = 0
+testNum = 0
+totalLines = 0
 
 ###########################################
 def printDebug(str):
@@ -130,17 +134,20 @@ def loadUncompressed(path):
 def readAndRunZipFiles():
     global model
     global numOffiles
+    global numOffilesInEpoch
+    global totalLines
+    numOffilesInEpoch = 0
     archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
     totalLines = 0
+    trainX = None
+    trainY = None
+    trainY = None
+    testY = None
     for file in archive.filelist:
         if ("part-" in file.filename and ".csv" in file.filename):
             df = readCSVFromZip(archive, file)
             df = df.dropna()  # todo: do we need this?
             target = df.pop('is_click')
-            trainX = None
-            trainY = None
-            trainY = None
-            testY = None
             if (test):
                 printDebug("test mode - split train/validations")
                 trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.25, random_state=seed)
@@ -151,34 +158,56 @@ def readAndRunZipFiles():
             printDebug(
                 "handled lines[" + str(df.__len__()) + "]"
                 + "total[" + str(totalLines) + "]"
+                + "numOffilesInEpoch[" + str(numOffilesInEpoch) + "]"
                 + "numOffiles[" + str(numOffiles) + "]"
                 + "epochNum[" + str(epochNum) + "]"
             )
             totalLines = totalLines + df.__len__()
             if (test):
                 # calcullate error on the validation data
-                testX, testY = transformDataFramesToTFArr(testX, testY)
-                loss, accuracy = model.evaluate(testX, testY)
-                testRes = model.predict(testX)
-                # todo: Check that the res data is not <0 or >1 and fix if it does
-                printDebug(''
-                           + 'test - Accuracy:[ %.2f]' % (accuracy * 100)
-                           + 'layers[' + str(layers) + ']'
-                           + 'Epoch[' + str(epochNum) + ']'
-                           + str(stats.describe(testRes))
-                           )
+                evaluateModel(model, testX, testY, True)
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
                     break
-    printToFile("./models/model" + str(runStartTime) + "_lines" + str(totalLines) + ".log")
+            # test using the last read file any way
+    if (totalLines > 0):
+        # after every epoch - evaluate teh last trained file
+        evaluateModel(model, trainX, trainY, False)
+    printToFile(
+        "./models/model"
+        + str(runStartTime)
+        + "_lines" + str(totalLines)
+        + "test" + str(testNum)
+        + "Epoch" + str(epochNum)
+        + ".log")
+
+
+def evaluateModel(model, testX, testY, bTransform):
+    if (bTransform):
+        testX, testY = transformDataFramesToTFArr(testX, testY)
+    else:
+        testX = testX.values
+        testY = testY.values
+
+    loss, accuracy = model.evaluate(testX, testY)
+    testRes = model.predict(testX)
+    # todo: Check that the res data is not <0 or >1 and fix if it does
+    printDebug(''
+               + 'test - Accuracy:[ %.2f]' % (accuracy * 100)
+               + 'layers[' + str(layers) + ']'
+               + 'Epoch[' + str(epochNum) + ']'
+               + str(stats.describe(testRes))
+               )
 
 
 def readCSVFromZip(archive, file):
     global numOffiles
+    global numOffilesInEpoch
     readBeginTime = time.time()
     fileData = archive.read(file.filename)
     printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
     numOffiles = numOffiles + 1
+    numOffilesInEpoch = numOffilesInEpoch + 1
     s = str(fileData, 'utf-8')
     data = StringIO(s)
     df = pd.read_csv(data)
@@ -320,7 +349,7 @@ def saveModel():
 
 
 def run():
-    global runStartTime, epochNum
+    global runStartTime, epochNum, testNum
     for testNum in range(0, 4):
         printDebug('*********************************************')
         layers[0] = layers[0] + testNum
@@ -347,4 +376,12 @@ def run():
 
 run()
 printDebug(" ---- Done ---- ")
+printToFile(
+        "./models/model"
+        + str(runStartTime)
+        + "_lines" + str(totalLines)
+        + "test" + str(testNum)
+        + "Epoch" + str(epochNum)
+        + "Done"
+        + ".log")
 exit(0)

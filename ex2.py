@@ -19,25 +19,26 @@ import numpy
 ###########################################################################
 # todo: Plan / feature engeneering\
 #  DONE - consider remove first time value
+#  DONE - time + gmt_offset --> new time ; remove GMT // (save time.. ?)
+#  Done - calculate user click rate #  user -> targets + num seen #user that cliced more then once --> may click it again
+#  create a shared category between the different file batch so the same values will be used for all batches
 #  consider use LSTM
 #  Change the target to categorial and not numerical
 #  helper data for the domain
-#  user -> targets + num seen #user that cliced more then once --> may click it again
 #  target -> total seen + time # taret that is popular (and seen lately ? )
-#  user -> clics ratio # is teh user clicking/ can we expect him to click
 #  target + data --> Target CF
 #  session based mechanism
 #  date/time  --> date features
-#  time + gmt_offset --> new time ; remove GMT // (save time.. ?)
 #  emphesize the connection between    user_recs    user_clicks    user_target_recs
 #  one may be removed browser_platform and os_family // (save time..?)
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-epochs = 40
+epochs = 10
 test = True
 limitNumOfFilesInTest = 1
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
+layers = [15, 10, 5, 1]
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -102,8 +103,6 @@ def saveModelToFile(dumpFileFullPath):
 #         df = loadUncompressed(csvfile)
 #         # printDebug(df)
 #         handleDataChunk(df)
-#
-#
 
 def loadUncompressed(path):
     chunksNum = 0
@@ -162,7 +161,12 @@ def readAndRunZipFiles():
                 loss, accuracy = model.evaluate(testX, testY)
                 testRes = model.predict(testX)
                 # todo: Check that the res data is not <0 or >1 and fix if it does
-                printDebug('Epoch[' + str(epochNum) + ']test - Accuracy:[ %.2f]' % (accuracy * 100) + str(stats.describe(testRes)))
+                printDebug(''
+                           + 'test - Accuracy:[ %.2f]' % (accuracy * 100)
+                           + 'layers[' + str(layers) + ']'
+                           + 'Epoch[' + str(epochNum) + ']'
+                           + str(stats.describe(testRes))
+                           )
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
                     break
@@ -191,7 +195,7 @@ def fitAnn(df, target):
     X, y = transformDataFramesToTFArr(df, target)
     # fit Model with chunk Data
     fitBeginTime = time.time()
-    printDebug("start fit dataChunk epochs[" + str(epochs) + "]")
+    printDebug("start fit dataChunk epochNum[" + str(epochNum) + "]epochs[" + str(epochs) + "]")
     # checkpoint_path = generateModelFileName()
     # Create a callback that saves the model's weights
     # cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
@@ -212,7 +216,7 @@ def fitAnn(df, target):
 
 
 def generateModelFileName(basePath):
-    if(basePath is None):
+    if (basePath is None):
         checkpoint_path = "./models/model_" + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
     else:
         checkpoint_path = basePath + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
@@ -229,7 +233,8 @@ def keepStatisticalData():
 def transformDataFramesToTFArr(df, target):
     # https://www.tensorflow.org/tutorials/load_data/pandas_dataframe
     # Convert column which is an object in the dataframe to a discrete numerical value.
-    # todo:     A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
+    # todo: Fix warning  A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
+    # todo: Check that categories are similare between file batches
     fitBeginTime = time.time()
     df['user_id_hash'] = pd.Categorical(df['user_id_hash'])
     df['user_id_hash'] = df.user_id_hash.cat.codes
@@ -255,12 +260,24 @@ def transformDataFramesToTFArr(df, target):
     df['country_code'] = df.country_code.cat.codes
     df['region'] = pd.Categorical(df['region'])
     df['region'] = df.region.cat.codes
+
+    df['os_family'] = pd.Categorical(df['os_family'])
+    df['os_family'] = df.os_family.cat.codes
+    df['day_of_week'] = pd.Categorical(df['day_of_week'])
+    df['day_of_week'] = df.day_of_week.cat.codes
     # printDebug(str(df.info()))
     # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))# option to include X and target together
     # train_dataset = dataset.shuffle(len(df)).batch(1)
     printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
 
     df.pop('page_view_start_time')
+
+    # time + gmt_offset --> new time ; remove GMT // (save time.. ?)
+    df['time_of_day'] = df['time_of_day'] + (df['gmt_offset'] / 100.0)
+    df.pop('gmt_offset')
+
+    # user click rate, with an option that the user is a cold start
+    df['user_click_rate'] = (df['user_clicks'] + 1) / (df['user_recs'] + 1)
 
     if (target is None):
         return df.values, None
@@ -271,12 +288,10 @@ def transformDataFramesToTFArr(df, target):
 def buileModel():
     global model
     model = Sequential()
-    model.add(Dense(22, input_dim=21, activation='sigmoid'))
-    model.add(Dense(15, activation='sigmoid'))
-    model.add(Dense(10, activation='sigmoid'))
-    model.add(Dense(7, activation='sigmoid'))
-    model.add(Dense(5, activation='sigmoid'))
-    model.add(Dense(1, activation='sigmoid'))
+    model.add(Dense(layers[0], input_dim=21, activation='sigmoid'))
+    model.add(Dense(layers[1], activation='sigmoid'))
+    model.add(Dense(layers[2], activation='sigmoid'))
+    model.add(Dense(layers[3], activation='sigmoid'))
     # compile the keras model
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 

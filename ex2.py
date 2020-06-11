@@ -33,9 +33,10 @@ import numpy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-epochs = 50
-test = False
+epochs = 40
+test = True
 limitNumOfFilesInTest = 1
+basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -127,6 +128,7 @@ def loadUncompressed(path):
 
 
 def readAndRunZipFiles():
+    global model
     global numOffiles
     archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
     totalLines = 0
@@ -159,7 +161,7 @@ def readAndRunZipFiles():
                 loss, accuracy = model.evaluate(testX, testY)
                 testRes = model.predict(testX)
                 # todo: Check that the res data is not <0 or >1 and fix if it does
-                printDebug('Accuracy:[ %.2f]' % (accuracy * 100) + str(stats.describe(testRes)))
+                printDebug('Epoch[' + str(epochNum) + ']test - Accuracy:[ %.2f]' % (accuracy * 100) + str(stats.describe(testRes)))
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
                     break
@@ -184,31 +186,36 @@ def handleDataChunk(df, target):
 
 
 def fitAnn(df, target):
+    global model
     X, y = transformDataFramesToTFArr(df, target)
     # fit Model with chunk Data
     fitBeginTime = time.time()
     printDebug("start fit dataChunk epochs[" + str(epochs) + "]")
-    checkpoint_path = "./models/model_" + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
+    # checkpoint_path = generateModelFileName()
     # Create a callback that saves the model's weights
-    cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
-                                                     save_weights_only=True,
-                                                     verbose=1)
-    # todo: Consider changing the model save to this 
-    # # saving the model in tensorflow format
-    # model.save('./MyModel_tf', save_format='tf')
-    # # loading the saved model
-    # loaded_model = tf.keras.models.load_model('./MyModel_tf')
+    # cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+    #                                                  save_weights_only=True,
+    #                                                  verbose=1)
     model.fit(x=X,
               y=y,
               batch_size=64,
               epochs=1,  # we fdo the epochs on the overall Data
               use_multiprocessing=True,
               verbose=2,
-              workers=3,
-              callbacks=[cp_callback])
+              workers=3
+              # ,callbacks=[cp_callback]
+              )
     printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
     # loss, accuracy = model.evaluate(X, y)
     # printDebug('Accuracy: %.2f' % (accuracy * 100))
+
+
+def generateModelFileName(basePath):
+    if(basePath is None):
+        checkpoint_path = "./models/model_" + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
+    else:
+        checkpoint_path = basePath + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
+    return checkpoint_path
 
 
 def keepStatisticalData():
@@ -251,6 +258,9 @@ def transformDataFramesToTFArr(df, target):
     # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))# option to include X and target together
     # train_dataset = dataset.shuffle(len(df)).batch(1)
     printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
+
+    df.pop('page_view_start_time')
+
     if (target is None):
         return df.values, None
     else:
@@ -260,7 +270,7 @@ def transformDataFramesToTFArr(df, target):
 def buileModel():
     global model
     model = Sequential()
-    model.add(Dense(22, input_dim=22, activation='sigmoid'))
+    model.add(Dense(22, input_dim=21, activation='sigmoid'))
     model.add(Dense(15, activation='sigmoid'))
     model.add(Dense(10, activation='sigmoid'))
     model.add(Dense(7, activation='sigmoid'))
@@ -271,6 +281,7 @@ def buileModel():
 
 
 def predictOnTest():
+    global model
     testFilewName = "./testData/test_file.csv"
     printDebug("predictOnTest [" + testFilewName + "]")
     dfTest = loadUncompressed(testFilewName)
@@ -284,6 +295,13 @@ def predictOnTest():
     res.to_csv(resFileName, header=True, index=False)
 
 
+def saveModel():
+    checkpoint_path = generateModelFileName(basePath)
+    # saving the model in tensorflow format
+    model.save(checkpoint_path, save_format='tf')
+    # loading the saved model
+
+
 def run():
     global runStartTime, epochNum
     runStartTime = time.time()
@@ -291,8 +309,12 @@ def run():
     # read the data and fit
     epochNum = 0
     for epochNum in range(0, epochs):
-        printDebug("epochNum[" + str(epochNum) + "]")
+        printDebug("-------------------------------")
+        printDebug("start epoch[" + str(epochNum) + "]")
         readAndRunZipFiles()
+
+    saveModel()
+    # loaded_model = tf.keras.models.load_model('./MyModel_tf')
     predictOnTest()
 
 

@@ -35,10 +35,10 @@ import numpy
 # parameters for Debug
 # Todo: in Debug - change here
 epochs = 10
-test = True
+test = False
 limitNumOfFilesInTest = 1
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
-layers = [15, 10, 5, 1]
+layers = [15, 10, 5]
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -291,7 +291,7 @@ def buileModel():
     model.add(Dense(layers[0], input_dim=21, activation='sigmoid'))
     model.add(Dense(layers[1], activation='sigmoid'))
     model.add(Dense(layers[2], activation='sigmoid'))
-    model.add(Dense(layers[3], activation='sigmoid'))
+    model.add(Dense(1, activation='sigmoid'))
     # compile the keras model
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
@@ -312,6 +312,7 @@ def predictOnTest():
 
 
 def saveModel():
+    printDebug('saveModel')
     checkpoint_path = generateModelFileName(basePath)
     # saving the model in tensorflow format
     model.save(checkpoint_path, save_format='tf')
@@ -320,18 +321,28 @@ def saveModel():
 
 def run():
     global runStartTime, epochNum
-    runStartTime = time.time()
-    buileModel()
-    # read the data and fit
-    epochNum = 0
-    for epochNum in range(0, epochs):
-        printDebug("-------------------------------")
-        printDebug("start epoch[" + str(epochNum) + "]")
-        readAndRunZipFiles()
+    for testNum in range(0, 4):
+        printDebug('*********************************************')
+        layers[0] = layers[0] + testNum
+        layers[1] = layers[1] + testNum
+        layers[2] = layers[2] + testNum
+        printDebug(''
+                   + 'testNum[' + str(testNum) + ']'
+                   + 'layers[' + str(layers) + ']'
+                   + 'epochs[' + str(epochs) + ']'
+                   )
+        runStartTime = time.time()
+        buileModel()
+        # read the data and fit
+        epochNum = 0
+        for epochNum in range(0, epochs):
+            printDebug("-------------------------------")
+            printDebug("start epoch[" + str(epochNum) + "]")
+            readAndRunZipFiles()
 
-    saveModel()
-    # loaded_model = tf.keras.models.load_model('./MyModel_tf')
-    predictOnTest()
+        saveModel()
+        # loaded_model = tf.keras.models.load_model('./MyModel_tf')
+        predictOnTest()
 
 
 run()

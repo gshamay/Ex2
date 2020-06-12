@@ -6,24 +6,26 @@ import time
 import pandas as pd
 import zipfile
 from io import StringIO
-import tensorflow as tf
-from tensorflow.keras import Sequential
-from tensorflow.keras.layers import Dense
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+from sklearn.ensemble import RandomForestClassifier
 from scipy import stats
 import pickle
 import numpy as np
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
-# (tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
 ###########################################################################
+# TODO (Alex):
+#  Check why do we have each time two rows of AUC one is always 0.73, while the other is always 0.99889
+#  Check why we run our tree few times - it should be trained only once
+#  Make tuning to parameters
+#  Try LightGBM or XGBoost instead of RandomForest
+#
 # todo: Plan / feature engeneering\
 #  DONE - consider remove first time value
 #  DONE - time + gmt_offset --> new time ; remove GMT // (save time.. ?)
 #  Done - calculate user click rate #  user -> targets + num seen #user that cliced more then once --> may click it again
 #  DONE - find how to use this data w/o harming the accuracy - try to remove user / target / anything that is not common
-#  create a shared category between the different file batch so the same values will be used for all batches
-#  consider use LSTM
 #  Change the target to categorial and not numerical
 #  helper data for the domain
 #  target -> total seen + time # taret that is popular (and seen lately ? )
@@ -38,10 +40,10 @@ import numpy as np
 numOfTests = 3
 epochs = 5
 test = True
-test = False
+# test = False
 limitNumOfFilesInTest = 1
-basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
-layers = [13, 8, 3]
+basePath = "C:\\Users\\alexd\\OneDrive\\Ben Gurion\\Recommender Systems\\ex2\\Ex2\\models\\"
+
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -99,11 +101,6 @@ def printToFile(fileName):
     file1.close()
 
 
-def saveModelToFile(dumpFileFullPath):
-    with open(dumpFileFullPath, 'wb') as fp:
-        pickle.dump(model, fp)
-
-
 # def readAndRunUncompressedFiles():
 #     csvFiles = glob.glob("./data/*.csv");
 #     for csvfile in csvFiles:
@@ -125,7 +122,7 @@ def loadUncompressed(path):
         if (chunksNum % 10 == 0):
             took = time.time() - beginTime
             # printDebug(str(chunksNum) + " " + str(took))
-            # break  # TODO: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
+            # break  # todo: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
 
         chunksNum += 1
 
@@ -180,7 +177,7 @@ def readAndRunZipFiles():
         + "Epoch" + str(epochNum)
         + ".log")
 
-
+# TODO: Check what is the purpose of getting testX, testY, trainX, trainY as part of an input
 def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY):
     global totalLines
     df = df.dropna()  # todo: do we need this?
@@ -220,20 +217,15 @@ def evaluateModel(model, testX, testY, bTransform):
         testY = testY.values
 
     testRes = model.predict(testX)
-    m = tf.keras.metrics.AUC()
-    m.update_state(testY, testRes.flatten())
-    AUC = m.result().numpy()
+    AUC = roc_auc_score(testY, testRes)
 
-    normRes = np.vectorize(normalizeResults)(testRes.flatten())
-    m.reset_states()
-    m.update_state(testY,normRes)
-    AUCNorm = m.result().numpy()
+    normRes = np.vectorize(normalizeResults)(testRes)
+    AUCNorm = roc_auc_score(testY, normRes)
 
     # todo: Check that the res data is not <0 or >1 and fix if it does
     printDebug(''
                + 'test: AUC[' + str(AUC) + ']'
-               + 'test: AUC[' + str(AUCNorm) + ']'
-               + 'layers[' + str(layers) + ']'
+               + 'test: AUCNorm[' + str(AUCNorm) + ']'
                + 'Epoch[' + str(epochNum) + ']'
                + str(stats.describe(testRes))
                )
@@ -266,18 +258,7 @@ def fitAnn(df, target):
     printDebug("start fit dataChunk epochNum[" + str(epochNum) + "]epochs[" + str(epochs) + "]")
     # checkpoint_path = generateModelFileName()
     # Create a callback that saves the model's weights
-    # cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
-    #                                                  save_weights_only=True,
-    #                                                  verbose=1)
-    model.fit(x=X,
-              y=y,
-              batch_size=64,
-              epochs=1,  # we fdo the epochs on the overall Data
-              use_multiprocessing=True,
-              verbose=2,
-              workers=3
-              # ,callbacks=[cp_callback]
-              )
+    model.fit(X, y)
     printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
     # loss, accuracy = model.evaluate(X, y)
     # printDebug('Accuracy: %.2f' % (accuracy * 100))
@@ -333,9 +314,6 @@ def transformDataFramesToTFArr(df, target):
     df['os_family'] = df.os_family.cat.codes
     df['day_of_week'] = pd.Categorical(df['day_of_week'])
     df['day_of_week'] = df.day_of_week.cat.codes
-    # printDebug(str(df.info()))
-    # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))# option to include X and target together
-    # train_dataset = dataset.shuffle(len(df)).batch(1)
     printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
 
     df.pop('page_view_start_time')
@@ -346,10 +324,10 @@ def transformDataFramesToTFArr(df, target):
 
     # user click rate, with an option that the user is a cold start
     df['user_click_rate'] = (df['user_clicks'] + 1) / (df['user_recs'] + 1)
-    # give more meaning to click rate differences
+    # give more meaning to click rate differences # TODO - why multiply 10 times - it is meaningless, no?
     df['user_click_rate_pow'] = (df['user_click_rate'] * 10).__pow__(2)
 
-    # todo: We should  find how to use this data
+    # TODO: We should  find how to use this data
     df.pop('user_id_hash')
     df.pop('target_id_hash')
     df.pop('syndicator_id_hash')
@@ -366,25 +344,7 @@ def transformDataFramesToTFArr(df, target):
 
 def builedModel():
     global model
-    model = Sequential()
-    METRICS = [
-        # tf.keras.metrics.TruePositives(name='tp'),
-        # tf.keras.metrics.FalsePositives(name='fp'),
-        # tf.keras.metrics.TrueNegatives(name='tn'),
-        # tf.keras.metrics.FalseNegatives(name='fn'),
-        # tf.keras.metrics.BinaryAccuracy(name='accuracy'),
-        # tf.keras.metrics.Precision(name='precision'),
-        # tf.keras.metrics.Recall(name='recall'),
-        tf.keras.metrics.AUC(name='auc'),
-    ]
-    loss = tf.keras.losses.BinaryCrossentropy()
-    optimizer = tf.keras.optimizers.Adam(lr=1e-3)
-    model.add(Dense(layers[0], input_dim=15, activation='sigmoid'))
-    model.add(Dense(layers[1], activation='sigmoid'))
-    model.add(Dense(layers[2], activation='sigmoid'))
-    model.add(Dense(1, activation='sigmoid'))
-    # compile the keras model
-    model.compile(loss=loss, optimizer=optimizer, metrics=METRICS)
+    model = RandomForestClassifier(verbose=2, n_jobs=3)
 
 
 def predictOnTest():
@@ -402,37 +362,19 @@ def predictOnTest():
     res.to_csv(resFileName, header=True, index=False)
 
 
-def saveModel():
-    printDebug('saveModel')
-    checkpoint_path = generateModelFileName(basePath)
-    # saving the model in tensorflow format
-    model.save(checkpoint_path, save_format='tf')
-    # loading the saved model
-
-
 def run():
-    global runStartTime, epochNum, testNum
+    global runStartTime, testNum
     for testNum in range(0, numOfTests):
         printDebug('*********************************************')
-        layers[0] = layers[0] + 1
-        layers[1] = layers[1] + 1
-        layers[2] = layers[2] + 1
         printDebug(''
                    + 'testNum[' + str(testNum) + ']'
-                   + 'layers[' + str(layers) + ']'
-                   + 'epochs[' + str(epochs) + ']'
                    )
         runStartTime = time.time()
         builedModel()
         # read the data and fit
-        epochNum = 0
-        for epochNum in range(0, epochs):
-            printDebug("-------------------------------")
-            printDebug("start epoch[" + str(epochNum) + "]")
-            readAndRunZipFiles()
+        printDebug("-------------------------------")
+        readAndRunZipFiles()
 
-        saveModel()
-        # loaded_model = tf.keras.models.load_model('./MyModel_tf')
         predictOnTest()
 
 
@@ -443,7 +385,6 @@ printToFile(
     + str(runStartTime)
     + "_lines" + str(totalLines)
     + "test" + str(testNum)
-    + "Epoch" + str(epochNum)
     + "Done"
     + ".log")
 exit(0)

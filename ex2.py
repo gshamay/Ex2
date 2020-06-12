@@ -12,7 +12,6 @@ from tensorflow.keras.layers import Dense
 from sklearn.model_selection import train_test_split
 from scipy import stats
 import pickle
-import numpy
 import numpy as np
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
@@ -394,9 +393,9 @@ def predictOnTest():
     printDebug("predictOnTest [" + testFilewName + "]")
     dfTest = loadUncompressed(testFilewName)
     IDs = dfTest.pop('Id')
-    test = transformDataFramesToTFArr(dfTest, None)
+    test,_ = transformDataFramesToTFArr(dfTest, None)
     Predicted = model.predict(test)
-    PredictedArr = numpy.array(Predicted)
+    PredictedArr = np.array(Predicted)
     res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])
     res.Id = res.Id.astype(int)
     resFileName = "./models/model_" + str(runStartTime) + "_res.csv"

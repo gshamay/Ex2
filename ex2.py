@@ -21,7 +21,7 @@ import numpy
 #  DONE - consider remove first time value
 #  DONE - time + gmt_offset --> new time ; remove GMT // (save time.. ?)
 #  Done - calculate user click rate #  user -> targets + num seen #user that cliced more then once --> may click it again
-#  try to remove user / target / anything that is not common 
+#  DONE - find how to use this data w/o harming the accuracy - try to remove user / target / anything that is not common
 #  create a shared category between the different file batch so the same values will be used for all batches
 #  consider use LSTM
 #  Change the target to categorial and not numerical
@@ -35,12 +35,13 @@ import numpy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-epochs = 10
+numOfTests = 3
+epochs = 5
 test = True
 test = False
-limitNumOfFilesInTest = 1
+limitNumOfFilesInTest = 2
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
-layers = [15, 10, 5]
+layers = [13, 8, 3]
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -80,6 +81,7 @@ model = None
 epochNum = 0
 testNum = 0
 totalLines = 0
+
 
 ###########################################
 def printDebug(str):
@@ -137,43 +139,39 @@ def readAndRunZipFiles():
     global numOffiles
     global numOffilesInEpoch
     global totalLines
+    epochBeginTime = time.time()
     numOffilesInEpoch = 0
     archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
     totalLines = 0
     trainX = None
     trainY = None
-    trainY = None
+    testX = None
     testY = None
     for file in archive.filelist:
         if ("part-" in file.filename and ".csv" in file.filename):
+            fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
-            df = df.dropna()  # todo: do we need this?
-            target = df.pop('is_click')
+            testX, testY, trainX, trainY = handleASingleDFChunk(
+                df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY)
+            printDebug("file handle time[" + str(time.time() - fileBeginTime)
+                       + "]epochNum[" + str(epochNum)
+                       + "]numOffilesInEpoch[" + str(numOffilesInEpoch)
+                       + "]")
             if (test):
-                printDebug("test mode - split train/validations")
-                trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.25, random_state=seed)
-            else:
-                trainX = df
-                trainY = target
-            handleDataChunk(trainX, trainY)
-            printDebug(
-                "handled lines[" + str(df.__len__()) + "]"
-                + "total[" + str(totalLines) + "]"
-                + "numOffilesInEpoch[" + str(numOffilesInEpoch) + "]"
-                + "numOffiles[" + str(numOffiles) + "]"
-                + "epochNum[" + str(epochNum) + "]"
-            )
-            totalLines = totalLines + df.__len__()
-            if (test):
-                # calcullate error on the validation data
+            # calcullate error on the validation data
+            # Evaluate the model with a partial part of the incoming data
+            # can have wrong values between teh epochs if different entries are selected for the test (enries taht the model was trained on)
                 evaluateModel(model, testX, testY, True)
-                # test using a few files only
-                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
-                    break
-            # test using the last read file any way
+            # test using a few files only
+            if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
+                break
+
+    # test each epoch - using the last read file any way
     if (totalLines > 0):
         # after every epoch - evaluate teh last trained file
         evaluateModel(model, trainX, trainY, False)
+    # print each epoch - with the file name
+    printDebug("Epoch time[" + str(time.time() - epochBeginTime) + "]epochNum[" + str(epochNum) + "]")
     printToFile(
         "./models/model"
         + str(runStartTime)
@@ -181,6 +179,28 @@ def readAndRunZipFiles():
         + "test" + str(testNum)
         + "Epoch" + str(epochNum)
         + ".log")
+
+
+def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY):
+    global totalLines
+    df = df.dropna()  # todo: do we need this?
+    target = df.pop('is_click')
+    if (test):
+        printDebug("test mode - split train/validations")
+        trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.25, random_state=seed)
+    else:
+        trainX = df
+        trainY = target
+    handleDataChunk(trainX, trainY)
+    printDebug(
+        "handled lines[" + str(df.__len__()) + "]"
+        + "total[" + str(totalLines) + "]"
+        + "numOffilesInEpoch[" + str(numOffilesInEpoch) + "]"
+        + "numOffiles[" + str(numOffiles) + "]"
+        + "epochNum[" + str(epochNum) + "]"
+    )
+    totalLines = totalLines + df.__len__()
+    return testX, testY, trainX, trainY
 
 
 def evaluateModel(model, testX, testY, bTransform):
@@ -308,6 +328,17 @@ def transformDataFramesToTFArr(df, target):
 
     # user click rate, with an option that the user is a cold start
     df['user_click_rate'] = (df['user_clicks'] + 1) / (df['user_recs'] + 1)
+    # give more meaning to click rate differences
+    df['user_click_rate_pow'] = (df['user_click_rate'] * 10).__pow__(2)
+
+    # todo: We should  find how to use this data
+    df.pop('user_id_hash')
+    df.pop('target_id_hash')
+    df.pop('syndicator_id_hash')
+    df.pop('campaign_id_hash')
+    df.pop('placement_id_hash')
+    df.pop('publisher_id_hash')
+    df.pop('source_id_hash')
 
     if (target is None):
         return df.values, None
@@ -318,7 +349,7 @@ def transformDataFramesToTFArr(df, target):
 def buileModel():
     global model
     model = Sequential()
-    model.add(Dense(layers[0], input_dim=21, activation='sigmoid'))
+    model.add(Dense(layers[0], input_dim=15, activation='sigmoid'))
     model.add(Dense(layers[1], activation='sigmoid'))
     model.add(Dense(layers[2], activation='sigmoid'))
     model.add(Dense(1, activation='sigmoid'))
@@ -351,11 +382,11 @@ def saveModel():
 
 def run():
     global runStartTime, epochNum, testNum
-    for testNum in range(0, 4):
+    for testNum in range(0, numOfTests):
         printDebug('*********************************************')
-        layers[0] = layers[0] + testNum
-        layers[1] = layers[1] + testNum
-        layers[2] = layers[2] + testNum
+        layers[0] = layers[0] + 1
+        layers[1] = layers[1] + 1
+        layers[2] = layers[2] + 1
         printDebug(''
                    + 'testNum[' + str(testNum) + ']'
                    + 'layers[' + str(layers) + ']'
@@ -378,11 +409,11 @@ def run():
 run()
 printDebug(" ---- Done ---- ")
 printToFile(
-        "./models/model"
-        + str(runStartTime)
-        + "_lines" + str(totalLines)
-        + "test" + str(testNum)
-        + "Epoch" + str(epochNum)
-        + "Done"
-        + ".log")
+    "./models/model"
+    + str(runStartTime)
+    + "_lines" + str(totalLines)
+    + "test" + str(testNum)
+    + "Epoch" + str(epochNum)
+    + "Done"
+    + ".log")
 exit(0)

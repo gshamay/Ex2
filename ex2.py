@@ -21,6 +21,7 @@ import numpy
 #  DONE - consider remove first time value
 #  DONE - time + gmt_offset --> new time ; remove GMT // (save time.. ?)
 #  Done - calculate user click rate #  user -> targets + num seen #user that cliced more then once --> may click it again
+#  try to remove user / target / anything that is not common 
 #  create a shared category between the different file batch so the same values will be used for all batches
 #  consider use LSTM
 #  Change the target to categorial and not numerical

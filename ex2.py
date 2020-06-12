@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from scipy import stats
 import pickle
 import numpy
+import numpy as np
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
 # (tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
@@ -39,7 +40,7 @@ numOfTests = 3
 epochs = 5
 test = True
 test = False
-limitNumOfFilesInTest = 2
+limitNumOfFilesInTest = 1
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 layers = [13, 8, 3]
 ###########################################################################
@@ -158,13 +159,13 @@ def readAndRunZipFiles():
                        + "]numOffilesInEpoch[" + str(numOffilesInEpoch)
                        + "]")
             if (test):
-            # calcullate error on the validation data
-            # Evaluate the model with a partial part of the incoming data
-            # can have wrong values between teh epochs if different entries are selected for the test (enries taht the model was trained on)
+                # calcullate error on the validation data
+                # Evaluate the model with a partial part of the incoming data
+                # can have wrong values between teh epochs if different entries are selected for the test (enries taht the model was trained on)
                 evaluateModel(model, testX, testY, True)
-            # test using a few files only
-            if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
-                break
+                # test using a few files only
+                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
+                    break
 
     # test each epoch - using the last read file any way
     if (totalLines > 0):
@@ -203,6 +204,15 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
     return testX, testY, trainX, trainY
 
 
+def normalizeResults(x):
+    if (x < 0.3):
+        return 0
+    if (x > 0.7):
+        return 1
+    else:
+        return x
+
+
 def evaluateModel(model, testX, testY, bTransform):
     if (bTransform):
         testX, testY = transformDataFramesToTFArr(testX, testY)
@@ -210,11 +220,20 @@ def evaluateModel(model, testX, testY, bTransform):
         testX = testX.values
         testY = testY.values
 
-    loss, accuracy = model.evaluate(testX, testY)
     testRes = model.predict(testX)
+    m = tf.keras.metrics.AUC()
+    m.update_state(testY, testRes.flatten())
+    AUC = m.result().numpy()
+
+    normRes = np.vectorize(normalizeResults)(testRes.flatten())
+    m.reset_states()
+    m.update_state(testY,normRes)
+    AUCNorm = m.result().numpy()
+
     # todo: Check that the res data is not <0 or >1 and fix if it does
     printDebug(''
-               + 'test - Accuracy:[ %.2f]' % (accuracy * 100)
+               + 'test: AUC[' + str(AUC) + ']'
+               + 'test: AUC[' + str(AUCNorm) + ']'
                + 'layers[' + str(layers) + ']'
                + 'Epoch[' + str(epochNum) + ']'
                + str(stats.describe(testRes))
@@ -349,12 +368,24 @@ def transformDataFramesToTFArr(df, target):
 def buileModel():
     global model
     model = Sequential()
+    METRICS = [
+        # tf.keras.metrics.TruePositives(name='tp'),
+        # tf.keras.metrics.FalsePositives(name='fp'),
+        # tf.keras.metrics.TrueNegatives(name='tn'),
+        # tf.keras.metrics.FalseNegatives(name='fn'),
+        # tf.keras.metrics.BinaryAccuracy(name='accuracy'),
+        # tf.keras.metrics.Precision(name='precision'),
+        # tf.keras.metrics.Recall(name='recall'),
+        tf.keras.metrics.AUC(name='auc'),
+    ]
+    loss = tf.keras.losses.BinaryCrossentropy()
+    optimizer = tf.keras.optimizers.Adam(lr=1e-3)
     model.add(Dense(layers[0], input_dim=15, activation='sigmoid'))
     model.add(Dense(layers[1], activation='sigmoid'))
     model.add(Dense(layers[2], activation='sigmoid'))
     model.add(Dense(1, activation='sigmoid'))
     # compile the keras model
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+    model.compile(loss=loss, optimizer=optimizer, metrics=METRICS)
 
 
 def predictOnTest():
@@ -366,7 +397,7 @@ def predictOnTest():
     test = transformDataFramesToTFArr(dfTest, None)
     Predicted = model.predict(test)
     PredictedArr = numpy.array(Predicted)
-    res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr)}, columns=['Id', 'Predicted'])
+    res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])
     res.Id = res.Id.astype(int)
     resFileName = "./models/model_" + str(runStartTime) + "_res.csv"
     res.to_csv(resFileName, header=True, index=False)

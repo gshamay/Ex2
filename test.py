@@ -14,4 +14,12 @@ df['n'] = pd.Categorical(df['n'])
 df['n'] = df.n.cat.codes
 
 df1['f'] = pd.Categorical(df1['f']) #[1,2,3]
-df1.cat.rename_categories([22, 33, 11])
+# df1.cat.rename_categories([22, 33, 11])
+
+print(df1.info())
+dfCatSeries = df1['f']
+
+print(str(df1.max(axis = 1, skipna = True)))
+df1['lala'] = [5,3,2]
+df3 =  {'g':df1['C'],'k':df1['lala']}
+df3 = pd.DataFrame(data=df3)

@@ -14,6 +14,11 @@ from scipy import stats
 import pickle
 import numpy as np
 
+from surprise import SVD
+from surprise import Dataset
+from surprise import Reader
+from surprise import accuracy
+
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
 # (tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
 ###########################################################################
@@ -22,6 +27,11 @@ import numpy as np
 #  DONE - time + gmt_offset --> new time ; remove GMT // (save time.. ?)
 #  Done - calculate user click rate #  user -> targets + num seen #user that cliced more then once --> may click it again
 #  DONE - find how to use this data w/o harming the accuracy - try to remove user / target / anything that is not common
+#  Done - Creare SVD - user - item using the user recs to the target
+#  Add SVD as input to the ANN (Hybrid)
+#  Add SVD ensamble
+#  SVD of more categorials
+#  one HOT to some of the parameters
 #  create a shared category between the different file batch so the same values will be used for all batches
 #  consider use LSTM
 #  Change the target to categorial and not numerical
@@ -35,13 +45,18 @@ import numpy as np
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 3
-epochs = 5
+numOfTests = 1
+epochs = 1
+epochsOfBatch = 1
 test = True
-test = False
-limitNumOfFilesInTest = 1
+# test = False
+limitNumOfFilesInTest = 3
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 layers = [13, 8, 3]
+K = 400
+lam = 0.03
+delta = 0.07
+bSvdTrained = False
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -58,7 +73,7 @@ layers = [13, 8, 3]
 #  8   placement_id_hash        462734 non-null  object //affect the calibration
 #  9   user_recs                462734 non-null  float64 // user actual saw
 #  10  user_clicks              462734 non-null  float64 // user actual clicked
-#  11  user_target_recs         462734 non-null  float64 //how many he saw this
+#  11  user_target_recs         462734 non-null  float64 //how many he saw this [0->100]
 #  12  publisher_id_hash        462734 non-null  object //the website
 #  13  source_id_hash           462734 non-null  object //web actual page
 #  14  source_item_type         462734 non-null  object //type of page
@@ -78,6 +93,7 @@ stringToPrintToFile = ""
 numOffiles = 0
 numOffilesInEpoch = 0
 model = None
+SVDModel = None
 epochNum = 0
 testNum = 0
 totalLines = 0
@@ -104,6 +120,45 @@ def saveModelToFile(dumpFileFullPath):
         pickle.dump(model, fp)
 
 
+##############################################################
+
+def load_trainset(path):
+    df_train = load(path)
+    df_train = df_train.dropna()
+    df_train = df_train[['user_id', 'business_id', 'stars']]
+    reader = Reader(rating_scale=(1, 10))
+    train_data = Dataset.load_from_df(df_train, reader)
+    train_set = train_data.build_full_trainset()
+    return train_set
+
+
+def load_testset(path):
+    df_test = load(path)
+    df_test = df_test.dropna()
+    df_test = df_test[['user_id', 'business_id', 'stars']]
+    test_set = [tuple(x) for x in df_test.to_numpy()]
+    return test_set
+
+
+def train_svd(train_set):
+    global SVDModel, bSvdTrained
+    printDebug("SVDModel fit start")
+    beginTime = time.time()
+    SVDModel.fit(train_set)
+    bSvdTrained = True
+    printDebug("SVDModel fit took[" + str(time.time() - beginTime) + "]")
+
+
+def test_svd(test_set, model):
+    print("Test Surprise SVD")
+    testing_predictions = model.test(test_set)
+    testing_rmse_score = accuracy.rmse(testing_predictions)
+    testing_mae_score = accuracy.mae(testing_predictions)
+    print('Testing RMSE score: {}'.format(testing_rmse_score))
+    print('Testing MAE score: {}'.format(testing_mae_score))
+
+
+##############################################################
 # def readAndRunUncompressedFiles():
 #     csvFiles = glob.glob("./data/*.csv");
 #     for csvfile in csvFiles:
@@ -151,6 +206,7 @@ def readAndRunZipFiles():
         if ("part-" in file.filename and ".csv" in file.filename):
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
+            printDebug("user_target_recs max[" + str(df['user_target_recs'].max(axis=0, skipna=True)) + "]")  # debug
             testX, testY, trainX, trainY = handleASingleDFChunk(
                 df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY)
             printDebug("file handle time[" + str(time.time() - fileBeginTime)
@@ -161,7 +217,9 @@ def readAndRunZipFiles():
                 # calcullate error on the validation data
                 # Evaluate the model with a partial part of the incoming data
                 # can have wrong values between teh epochs if different entries are selected for the test (enries taht the model was trained on)
-                evaluateModel(model, testX, testY, True)
+
+                # evaluateModel(model, testX, testY, True)
+
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
                     break
@@ -182,15 +240,23 @@ def readAndRunZipFiles():
 
 
 def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY):
-    global totalLines
+    global totalLines, SVDModel
     df = df.dropna()  # todo: do we need this?
     target = df.pop('is_click')
+
     if (test):
         printDebug("test mode - split train/validations")
-        trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.25, random_state=seed)
+        trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.99, random_state=seed)
     else:
         trainX = df
         trainY = target
+
+    ########################
+    # SVD
+    addSvdDataToTheDFChunk(SVDModel, trainX, trainY)
+    trainSVDWithCurrentDataChunk(trainX, trainY)
+    ########################
+
     handleDataChunk(trainX, trainY)
     printDebug(
         "handled lines[" + str(df.__len__()) + "]"
@@ -201,6 +267,54 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
     )
     totalLines = totalLines + df.__len__()
     return testX, testY, trainX, trainY
+
+
+def addSvdDataToTheDFChunk(SVDModel, X, Y):
+    # calculate SVD data from prev batches into this batch - if there is a model
+    if (bSvdTrained):
+        test_set_svd_Predict = createDataFrameForSvdPredict(X)
+        testing_predictions = SVDModel.test(test_set_svd_Predict)
+        testing_predictions = [x[3] for x in testing_predictions]
+        X['svdUserTarget'] = testing_predictions
+        # We want the ANN to use the SVD predicted data and not the calulated one that is provided to the SVD
+        # since this is what it will get oin the test as well
+    else:
+        X['svdUserTarget'] = \
+            Y * ((120 - (X['user_target_recs'])) / 120)  # only in the first batch we will use this actual data
+
+
+def trainSVDWithCurrentDataChunk(X, Y):
+    X = X.dropna()
+    df_train_svd = createDataFrameForSvdTrain(X, Y)
+    reader = Reader(rating_scale=(0, 1))
+    train_data = Dataset.load_from_df(df_train_svd, reader)
+    train_set = train_data.build_full_trainset()
+    train_svd(train_set)
+
+
+def createDataFrameForSvdTrain(X, Y):
+    train_svd_data = {
+        'user_id_hash': X['user_id_hash'],
+        'target_id_hash': X['target_id_hash'],
+        'user_target_recs': X['user_target_recs'],
+        'is_click': Y
+    }
+    df_train_svd = pd.DataFrame(data=train_svd_data)
+    df_train_svd['rate'] = df_train_svd['is_click'] * ((120 - (df_train_svd['user_target_recs'])) / 120)
+    df_train_svd.pop('user_target_recs')
+    df_train_svd.pop('is_click')
+    return df_train_svd
+
+
+def createDataFrameForSvdPredict(df):
+    test_svd_data = {
+        'user_id_hash': df['user_id_hash'],
+        'target_id_hash': df['target_id_hash'],
+    }
+    df_svd_Predict = pd.DataFrame(data=test_svd_data)
+    df_svd_Predict['rate'] = 0.5  # test method of SVD must get the 'rate'
+    test_set_svd_Predict = [tuple(x) for x in df_svd_Predict.to_numpy()]
+    return test_set_svd_Predict
 
 
 def normalizeResults(x):
@@ -226,7 +340,7 @@ def evaluateModel(model, testX, testY, bTransform):
 
     normRes = np.vectorize(normalizeResults)(testRes.flatten())
     m.reset_states()
-    m.update_state(testY,normRes)
+    m.update_state(testY, normRes)
     AUCNorm = m.result().numpy()
 
     # todo: Check that the res data is not <0 or >1 and fix if it does
@@ -272,7 +386,7 @@ def fitAnn(df, target):
     model.fit(x=X,
               y=y,
               batch_size=64,
-              epochs=1,  # we fdo the epochs on the overall Data
+              epochs=epochsOfBatch,  # we do the epochs on the overall Data ; this is an ephoch of the minibatch
               use_multiprocessing=True,
               verbose=2,
               workers=3
@@ -364,6 +478,11 @@ def transformDataFramesToTFArr(df, target):
         return df.values, target.values
 
 
+def builedSvdModel(K, lam, delta):
+    global SVDModel
+    SVDModel = SVD(n_factors=K, lr_all=lam, reg_all=delta)
+
+
 def builedModel():
     global model
     model = Sequential()
@@ -379,12 +498,12 @@ def builedModel():
     ]
     loss = tf.keras.losses.BinaryCrossentropy()
     optimizer = tf.keras.optimizers.Adam(lr=1e-3)
-    model.add(Dense(layers[0], input_dim=15, activation='sigmoid'))
+    model.add(Dense(layers[0], input_dim=16, activation='sigmoid'))
     model.add(Dense(layers[1], activation='sigmoid'))
     # model.add(Dense(layers[1], activation='relu'))
     # model.add(Dense(layers[1], activation='relu'))
     model.add(Dense(layers[2], activation='sigmoid'))
-    model.add(Dense(1, activation='sigmoid'))
+    model.add(Dense(1, activation='sigmoid'))  # softmax/sigmoid
     # compile the keras model
     model.compile(loss=loss, optimizer=optimizer, metrics=METRICS)
 
@@ -395,7 +514,7 @@ def predictOnTest():
     printDebug("predictOnTest [" + testFilewName + "]")
     dfTest = loadUncompressed(testFilewName)
     IDs = dfTest.pop('Id')
-    test,_ = transformDataFramesToTFArr(dfTest, None)
+    test, _ = transformDataFramesToTFArr(dfTest, None)
     Predicted = model.predict(test)
     PredictedArr = np.array(Predicted)
     res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])
@@ -426,6 +545,7 @@ def run():
                    )
         runStartTime = time.time()
         builedModel()
+        builedSvdModel(K, lam, delta)
         # read the data and fit
         epochNum = 0
         for epochNum in range(0, epochs):
@@ -448,4 +568,5 @@ printToFile(
     + "Epoch" + str(epochNum)
     + "Done"
     + ".log")
+
 exit(0)

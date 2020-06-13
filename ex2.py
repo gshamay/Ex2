@@ -45,11 +45,11 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 1  # 5
-epochs = 1  # 2
-epochsOfBatch = 1  # 4
+numOfTests = 5  # 5
+epochs = 2  # 2
+epochsOfBatch = 4  # 4
 test = True
-# test = False
+test = False
 limitNumOfFilesInTest = 3
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 layers = [13, 8, 3]
@@ -256,7 +256,8 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
     ########################
     # SVD
     addSvdDataToTheDFChunk(SVDModel, trainX, trainY)
-    trainSVDWithCurrentDataChunk(trainX, trainY)
+    if(epochNum < 1):
+        trainSVDWithCurrentDataChunk(trainX, trainY)
     ########################
 
     handleDataChunk(trainX, trainY)
@@ -281,6 +282,7 @@ def addSvdDataToTheDFChunk(SVDModel, X, Y):
     else:
         X['svdUserTarget'] = \
             Y * ((120 - (X['user_target_recs'])) / 120)  # only in the first batch we will use this actual data
+        #todo: Add some Random here to avoid bias 
 
 
 def predictWithSVD(SVDModel, X):

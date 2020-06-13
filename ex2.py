@@ -383,6 +383,7 @@ def buileModel():
     model.add(Dense(layers[0], input_dim=15, activation='sigmoid'))
     model.add(Dense(layers[1], activation='sigmoid'))
     # model.add(Dense(layers[1], activation='relu'))
+    # model.add(Dense(layers[1], activation='relu'))
     model.add(Dense(layers[2], activation='sigmoid'))
     model.add(Dense(1, activation='sigmoid'))
     # compile the keras model

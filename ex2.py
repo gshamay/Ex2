@@ -233,7 +233,7 @@ def evaluateModel(model, testX, testY, bTransform):
     # todo: Check that the res data is not <0 or >1 and fix if it does
     printDebug(''
                + 'test: AUC[' + str(AUC) + ']'
-               + 'test: AUC[' + str(AUCNorm) + ']'
+               + 'AUCNorm[' + str(AUCNorm) + ']'
                + 'layers[' + str(layers) + ']'
                + 'Epoch[' + str(epochNum) + ']'
                + str(stats.describe(testRes))
@@ -245,12 +245,12 @@ def readCSVFromZip(archive, file):
     global numOffilesInEpoch
     readBeginTime = time.time()
     fileData = archive.read(file.filename)
-    printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
     numOffiles = numOffiles + 1
     numOffilesInEpoch = numOffilesInEpoch + 1
     s = str(fileData, 'utf-8')
     data = StringIO(s)
     df = pd.read_csv(data)
+    printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
     return df
 
 
@@ -337,7 +337,6 @@ def transformDataFramesToTFArr(df, target):
     # printDebug(str(df.info()))
     # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))# option to include X and target together
     # train_dataset = dataset.shuffle(len(df)).batch(1)
-    printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
 
     df.pop('page_view_start_time')
 
@@ -359,6 +358,7 @@ def transformDataFramesToTFArr(df, target):
     df.pop('publisher_id_hash')
     df.pop('source_id_hash')
 
+    printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
     if (target is None):
         return df.values, None
     else:
@@ -382,6 +382,7 @@ def buileModel():
     optimizer = tf.keras.optimizers.Adam(lr=1e-3)
     model.add(Dense(layers[0], input_dim=15, activation='sigmoid'))
     model.add(Dense(layers[1], activation='sigmoid'))
+    # model.add(Dense(layers[1], activation='relu'))
     model.add(Dense(layers[2], activation='sigmoid'))
     model.add(Dense(1, activation='sigmoid'))
     # compile the keras model

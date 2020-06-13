@@ -45,9 +45,9 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 1
-epochs = 1
-epochsOfBatch = 1
+numOfTests = 1  # 5
+epochs = 1  # 2
+epochsOfBatch = 1  # 4
 test = True
 # test = False
 limitNumOfFilesInTest = 3
@@ -227,7 +227,9 @@ def readAndRunZipFiles():
     # test each epoch - using the last read file any way
     if (totalLines > 0):
         # after every epoch - evaluate teh last trained file
-        evaluateModel(model, trainX, trainY, False)
+        xCopy = df.copy()
+        yCopy = xCopy.pop('is_click')
+        evaluateModel(model, trainX, trainY, False, xCopy, yCopy)
     # print each epoch - with the file name
     printDebug("Epoch time[" + str(time.time() - epochBeginTime) + "]epochNum[" + str(epochNum) + "]")
     printToFile(
@@ -272,15 +274,23 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
 def addSvdDataToTheDFChunk(SVDModel, X, Y):
     # calculate SVD data from prev batches into this batch - if there is a model
     if (bSvdTrained):
-        test_set_svd_Predict = createDataFrameForSvdPredict(X)
-        testing_predictions = SVDModel.test(test_set_svd_Predict)
-        testing_predictions = [x[3] for x in testing_predictions]
+        testing_predictions = predictWithSVD(SVDModel, X)
         X['svdUserTarget'] = testing_predictions
         # We want the ANN to use the SVD predicted data and not the calulated one that is provided to the SVD
         # since this is what it will get oin the test as well
     else:
         X['svdUserTarget'] = \
             Y * ((120 - (X['user_target_recs'])) / 120)  # only in the first batch we will use this actual data
+
+
+def predictWithSVD(SVDModel, X):
+    printDebug("start predictWithSVD")
+    beginTime = time.time()
+    test_set_svd_Predict = createDataFrameForSvdPredict(X)
+    testing_predictions = SVDModel.test(test_set_svd_Predict)
+    testing_predictions = [x[3] for x in testing_predictions]
+    printDebug("predictWithSVD took [" + str(time.time() - beginTime) + "]")
+    return testing_predictions
 
 
 def trainSVDWithCurrentDataChunk(X, Y):
@@ -326,7 +336,14 @@ def normalizeResults(x):
         return x
 
 
-def evaluateModel(model, testX, testY, bTransform):
+def evaluateModel(model, testX, testY, bTransform, xCopy, yCopy):
+    AUCSVD = 0
+    if (bSvdTrained):
+        testResSvd = predictWithSVD(SVDModel, xCopy)
+        m = tf.keras.metrics.AUC()
+        m.update_state(yCopy.values, testResSvd)
+        AUCSVD = m.result().numpy()
+
     if (bTransform):
         testX, testY = transformDataFramesToTFArr(testX, testY)
     else:
@@ -347,6 +364,7 @@ def evaluateModel(model, testX, testY, bTransform):
     printDebug(''
                + 'test: AUC[' + str(AUC) + ']'
                + 'AUCNorm[' + str(AUCNorm) + ']'
+               + 'AUCSVD[' + str(AUCSVD) + ']'
                + 'layers[' + str(layers) + ']'
                + 'Epoch[' + str(epochNum) + ']'
                + str(stats.describe(testRes))
@@ -514,9 +532,24 @@ def predictOnTest():
     printDebug("predictOnTest [" + testFilewName + "]")
     dfTest = loadUncompressed(testFilewName)
     IDs = dfTest.pop('Id')
+
+    if (bSvdTrained):
+        testResSvd = predictWithSVD(SVDModel, dfTest)
+        res = pd.DataFrame({'Id': IDs, 'Predicted': testResSvd}, columns=['Id', 'Predicted'])
+        res.Id = res.Id.astype(int)
+        resFileName = "./models/modelSvd_" + str(runStartTime) + "_res.csv"
+        res.to_csv(resFileName, header=True, index=False)
+
+    if (bSvdTrained):
+        testing_predictions = predictWithSVD(SVDModel, dfTest)
+        dfTest['svdUserTarget'] = testing_predictions
+    else:
+        printDebug("Error - Check SVD status")
+
     test, _ = transformDataFramesToTFArr(dfTest, None)
     Predicted = model.predict(test)
     PredictedArr = np.array(Predicted)
+
     res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])
     res.Id = res.Id.astype(int)
     resFileName = "./models/model_" + str(runStartTime) + "_res.csv"

@@ -534,15 +534,15 @@ def predictOnTest():
     IDs = dfTest.pop('Id')
 
     if (bSvdTrained):
+        # predict on the test data using SVD
         testResSvd = predictWithSVD(SVDModel, dfTest)
+        # use SVD data as input in the test data for the ANN
+        dfTest['svdUserTarget'] = testResSvd
+        # write SVD res to file
         res = pd.DataFrame({'Id': IDs, 'Predicted': testResSvd}, columns=['Id', 'Predicted'])
         res.Id = res.Id.astype(int)
         resFileName = "./models/modelSvd_" + str(runStartTime) + "_res.csv"
         res.to_csv(resFileName, header=True, index=False)
-
-    if (bSvdTrained):
-        testing_predictions = predictWithSVD(SVDModel, dfTest)
-        dfTest['svdUserTarget'] = testing_predictions
     else:
         printDebug("Error - Check SVD status")
 

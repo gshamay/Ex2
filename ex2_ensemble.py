@@ -10,7 +10,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 from sklearn.ensemble import RandomForestClassifier
 from scipy import stats
-import pickle
 import numpy as np
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
@@ -38,13 +37,9 @@ import numpy as np
 # parameters for Debug
 # Todo: in Debug - change here
 numOfTests = 3
-epochs = 5
-test = True
-# test = False
-limitNumOfFilesInTest = 1
 basePath = "C:\\Users\\alexd\\OneDrive\\Ben Gurion\\Recommender Systems\\ex2\\Ex2\\models\\"
 
-###########################################################################
+####################################################################################
 # the DATA
 # Data columns (total 23 columns):
 #  #   Column                   Non-Null Count   Dtype
@@ -73,40 +68,8 @@ basePath = "C:\\Users\\alexd\\OneDrive\\Ben Gurion\\Recommender Systems\\ex2\\Ex
 #  21  gmt_offset               462734 non-null  int64
 #  22  is_click                 462734 non-null  float64
 # dtypes: float64(6), int64(5), object(12)
+###############################################################################################
 
-###########################################
-# globals
-stringToPrintToFile = ""
-numOffiles = 0
-numOffilesInEpoch = 0
-model = None
-epochNum = 0
-testNum = 0
-totalLines = 0
-
-
-###########################################
-def printDebug(str):
-    global stringToPrintToFile
-    print(str)
-    stringToPrintToFile = stringToPrintToFile + str + "\r"
-
-
-def printToFile(fileName):
-    global stringToPrintToFile
-    file1 = open(fileName, "a")
-    file1.write("\r************************\r")
-    file1.write(stringToPrintToFile)
-    stringToPrintToFile = ""
-    file1.close()
-
-
-# def readAndRunUncompressedFiles():
-#     csvFiles = glob.glob("./data/*.csv");
-#     for csvfile in csvFiles:
-#         df = loadUncompressed(csvfile)
-#         # printDebug(df)
-#         handleDataChunk(df)
 
 def loadUncompressed(path):
     chunksNum = 0
@@ -118,86 +81,26 @@ def loadUncompressed(path):
             data = dataChunk
         else:
             data = data.append(dataChunk, ignore_index=True)
-
-        if (chunksNum % 10 == 0):
-            took = time.time() - beginTime
-            # printDebug(str(chunksNum) + " " + str(took))
-            # break  # todo: DEBUG DEBUG DEBUG - FOR FAST TESTS ONLY
-
         chunksNum += 1
-
     took = time.time() - beginTime
-    printDebug("LOAD: chunksNum[" + str(chunksNum) + "]took[" + str(took) + "]data[" + str(len(data)) + "]")
+    print("LOAD: chunksNum[" + str(chunksNum) + "]took[" + str(took) + "]data[" + str(len(data)) + "]")
     return data
 
 
-def readAndRunZipFiles():
-    global model
-    global numOffiles
-    global numOffilesInEpoch
-    global totalLines
-    epochBeginTime = time.time()
-    numOffilesInEpoch = 0
+def readAndRunZipFiles(model):
+    beginTime = time.time()
     archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
-    totalLines = 0
-    trainX = None
-    trainY = None
-    testX = None
-    testY = None
     for file in archive.filelist:
-        if ("part-" in file.filename and ".csv" in file.filename):
+        if "part-" in file.filename and ".csv" in file.filename:
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
-            testX, testY, trainX, trainY = handleASingleDFChunk(
-                df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY)
-            printDebug("file handle time[" + str(time.time() - fileBeginTime)
-                       + "]epochNum[" + str(epochNum)
-                       + "]numOffilesInEpoch[" + str(numOffilesInEpoch)
-                       + "]")
-            if (test):
-                # calcullate error on the validation data
-                # Evaluate the model with a partial part of the incoming data
-                # can have wrong values between teh epochs if different entries are selected for the test (enries taht the model was trained on)
-                evaluateModel(model, testX, testY, True)
-                # test using a few files only
-                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
-                    break
+            df = df.dropna()  # todo: do we need this?
+            trainY = df.pop('is_click')
+            trainX = df
+            print("file handle time[" + str(time.time() - fileBeginTime)+ "]")
 
-    # test each epoch - using the last read file any way
-    if (totalLines > 0):
-        # after every epoch - evaluate teh last trained file
-        evaluateModel(model, trainX, trainY, False)
-    # print each epoch - with the file name
-    printDebug("Epoch time[" + str(time.time() - epochBeginTime) + "]epochNum[" + str(epochNum) + "]")
-    printToFile(
-        "./models/model"
-        + str(runStartTime)
-        + "_lines" + str(totalLines)
-        + "test" + str(testNum)
-        + "Epoch" + str(epochNum)
-        + ".log")
-
-# TODO: Check what is the purpose of getting testX, testY, trainX, trainY as part of an input
-def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY):
-    global totalLines
-    df = df.dropna()  # todo: do we need this?
-    target = df.pop('is_click')
-    if (test):
-        printDebug("test mode - split train/validations")
-        trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.25, random_state=seed)
-    else:
-        trainX = df
-        trainY = target
-    handleDataChunk(trainX, trainY)
-    printDebug(
-        "handled lines[" + str(df.__len__()) + "]"
-        + "total[" + str(totalLines) + "]"
-        + "numOffilesInEpoch[" + str(numOffilesInEpoch) + "]"
-        + "numOffiles[" + str(numOffiles) + "]"
-        + "epochNum[" + str(epochNum) + "]"
-    )
-    totalLines = totalLines + df.__len__()
-    return testX, testY, trainX, trainY
+    evaluateModel(model, trainX, trainY)
+    print("Epoch time[" + str(time.time() - beginTime) + "]")
 
 
 def normalizeResults(x):
@@ -209,13 +112,7 @@ def normalizeResults(x):
         return x
 
 
-def evaluateModel(model, testX, testY, bTransform):
-    if (bTransform):
-        testX, testY = transformDataFramesToTFArr(testX, testY)
-    else:
-        testX = testX.values
-        testY = testY.values
-
+def evaluateModel(model, testX, testY):
     testRes = model.predict(testX)
     AUC = roc_auc_score(testY, testRes)
 
@@ -223,60 +120,28 @@ def evaluateModel(model, testX, testY, bTransform):
     AUCNorm = roc_auc_score(testY, normRes)
 
     # todo: Check that the res data is not <0 or >1 and fix if it does
-    printDebug(''
+    print(''
                + 'test: AUC[' + str(AUC) + ']'
                + 'test: AUCNorm[' + str(AUCNorm) + ']'
-               + 'Epoch[' + str(epochNum) + ']'
                + str(stats.describe(testRes))
                )
 
 
 def readCSVFromZip(archive, file):
-    global numOffiles
-    global numOffilesInEpoch
     readBeginTime = time.time()
     fileData = archive.read(file.filename)
-    printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
-    numOffiles = numOffiles + 1
-    numOffilesInEpoch = numOffilesInEpoch + 1
+    print("read Zip file took [" + str(time.time() - readBeginTime) + "]")
     s = str(fileData, 'utf-8')
     data = StringIO(s)
     df = pd.read_csv(data)
     return df
 
 
-def handleDataChunk(df, target):
-    keepStatisticalData()
-    fitAnn(df, target)
-
-
-def fitAnn(df, target):
-    global model
-    X, y = transformDataFramesToTFArr(df, target)
-    # fit Model with chunk Data
+def trainModel(X, y, model):
     fitBeginTime = time.time()
-    printDebug("start fit dataChunk epochNum[" + str(epochNum) + "]epochs[" + str(epochs) + "]")
-    # checkpoint_path = generateModelFileName()
-    # Create a callback that saves the model's weights
+    print("start fit dataChunk")
     model.fit(X, y)
-    printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
-    # loss, accuracy = model.evaluate(X, y)
-    # printDebug('Accuracy: %.2f' % (accuracy * 100))
-
-
-def generateModelFileName(basePath):
-    if (basePath is None):
-        checkpoint_path = "./models/model_" + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
-    else:
-        checkpoint_path = basePath + str(runStartTime) + "_part" + str(numOffiles) + ".dump"
-    return checkpoint_path
-
-
-def keepStatisticalData():
-    pass
-    # statistical data
-    # currentUsers = df['user_id_hash'].unique()
-    # currentTargets = df['target_id_hash'].unique()
+    print("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
 
 
 def transformDataFramesToTFArr(df, target):
@@ -314,7 +179,7 @@ def transformDataFramesToTFArr(df, target):
     df['os_family'] = df.os_family.cat.codes
     df['day_of_week'] = pd.Categorical(df['day_of_week'])
     df['day_of_week'] = df.day_of_week.cat.codes
-    printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
+    print("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
 
     df.pop('page_view_start_time')
 
@@ -343,14 +208,12 @@ def transformDataFramesToTFArr(df, target):
 
 
 def builedModel():
-    global model
-    model = RandomForestClassifier(verbose=2, n_jobs=3)
+    return RandomForestClassifier(verbose=2, n_jobs=3)
 
 
-def predictOnTest():
-    global model
+def predictOnTest(model):
     testFilewName = "./testData/test_file.csv"
-    printDebug("predictOnTest [" + testFilewName + "]")
+    print("predictOnTest [" + testFilewName + "]")
     dfTest = loadUncompressed(testFilewName)
     IDs = dfTest.pop('Id')
     test,_ = transformDataFramesToTFArr(dfTest, None)
@@ -365,26 +228,20 @@ def predictOnTest():
 def run():
     global runStartTime, testNum
     for testNum in range(0, numOfTests):
-        printDebug('*********************************************')
-        printDebug(''
+        print('*********************************************')
+        print(''
                    + 'testNum[' + str(testNum) + ']'
                    )
         runStartTime = time.time()
-        builedModel()
+        model = builedModel()
         # read the data and fit
-        printDebug("-------------------------------")
-        readAndRunZipFiles()
+        print("-------------------------------")
+        readAndRunZipFiles(model)
 
-        predictOnTest()
+        predictOnTest(model)
 
 
 run()
-printDebug(" ---- Done ---- ")
-printToFile(
-    "./models/model"
-    + str(runStartTime)
-    + "_lines" + str(totalLines)
-    + "test" + str(testNum)
-    + "Done"
-    + ".log")
+print(" ---- Done ---- ")
+
 exit(0)

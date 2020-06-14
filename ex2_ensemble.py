@@ -9,16 +9,22 @@ from io import StringIO
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 from sklearn.ensemble import RandomForestClassifier
+
+import category_encoders as ce
 from scipy import stats
 import numpy as np
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
 ###########################################################################
 # TODO (Alex):
-#  Check why do we have each time two rows of AUC one is always 0.73, while the other is always 0.99889
-#  Check why we run our tree few times - it should be trained only once
+#  DONE: Check why do we have each time two rows of AUC one is always 0.73, while the other is always 0.99889
+#  DONE: Check why we run our tree few times - it should be trained only once
 #  Make tuning to parameters
 #  Try LightGBM or XGBoost instead of RandomForest
+#  Try to parse column target_item_taxonomy
+#  DONE: Try use columns with 'hash' ending
+#  Check if os_family really categorical
+#  Try cut time_of_day to morning, evening, day, night
 #
 # todo: Plan / feature engeneering\
 #  DONE - consider remove first time value
@@ -36,8 +42,6 @@ import numpy as np
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 3
-basePath = "C:\\Users\\alexd\\OneDrive\\Ben Gurion\\Recommender Systems\\ex2\\Ex2\\models\\"
 
 ####################################################################################
 # the DATA
@@ -70,6 +74,130 @@ basePath = "C:\\Users\\alexd\\OneDrive\\Ben Gurion\\Recommender Systems\\ex2\\Ex
 # dtypes: float64(6), int64(5), object(12)
 ###############################################################################################
 
+submit = True
+maxFiles = 2
+pd.options.display.width = 0
+
+
+def readCSVFromZip(archive, file):
+    readBeginTime = time.time()
+    fileData = archive.read(file.filename)
+    print("read Zip file took [" + str(time.time() - readBeginTime) + "]")
+    s = str(fileData, 'utf-8')
+    data = StringIO(s)
+    df = pd.read_csv(data)
+    return df
+
+
+def readTrainData():
+    beginTime = time.time()
+    archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
+    i=0
+    for file in archive.filelist:
+        if "part-" in file.filename and ".csv" in file.filename and i < maxFiles:
+            fileBeginTime = time.time()
+            if i==0:
+                df = readCSVFromZip(archive, file)
+            else:
+                new_df = readCSVFromZip(archive, file)
+                df = pd.concat([df, new_df])
+
+            print("file handle time[" + str(time.time() - fileBeginTime)+ "]")
+            i = i+1
+
+    trainDf, testDf = train_test_split(df, test_size=0.99, random_state=seed)
+    trainY = trainDf.pop('is_click')
+    trainX = trainDf
+    trainX, ce_target_encoder = preprocessData(trainX, trainY)
+    print(trainX.describe())
+
+    testY = testDf.pop('is_click')
+    testX = testDf
+    testX, ce_target_encoder = preprocessData(testX, ce_target_encoder=ce_target_encoder)
+    print(testX.describe())
+    print("Epoch time[" + str(time.time() - beginTime) + "]")
+    return trainX, testX, trainY, testY, ce_target_encoder
+
+
+def target_encode_column(X, y, categorical_columns):
+    ce_target_encoder = ce.TargetEncoder(cols=categorical_columns, min_samples_leaf=10)
+    ce_target_encoder.fit(X, y)
+    X = ce_target_encoder.transform(X)
+    return X, ce_target_encoder
+
+
+def preprocessData(df, y=None, ce_target_encoder=None):
+    fitBeginTime = time.time()
+    categorical_columns = ['user_id_hash', 'target_id_hash', 'syndicator_id_hash', 'campaign_id_hash',
+                           'target_item_taxonomy', 'placement_id_hash', 'publisher_id_hash', 'source_id_hash',
+                           'source_item_type', 'browser_platform', 'country_code', 'region',
+                           'os_family', 'day_of_week']
+    for column_name in categorical_columns:
+        df[column_name] = pd.Categorical(df[column_name])
+
+    if ce_target_encoder==None:
+        df, ce_target_encoder = target_encode_column(df, y, categorical_columns)
+    else:
+        df = ce_target_encoder.transform(df)
+
+    print("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
+
+    df.pop('page_view_start_time')
+
+    # time + gmt_offset --> new time ; remove GMT // (save time.. ?)
+    df['time_of_day'] = df['time_of_day'] + (df['gmt_offset'] / 100.0)
+    df.pop('gmt_offset')
+
+    # user click rate, with an option that the user is a cold start
+    df['user_click_rate'] = (df['user_clicks'] + 1) / (df['user_recs'] + 1)
+    df['user_click_rate_pow'] = np.power(df['user_click_rate'], 2)
+
+    # TODO: We should  find how to use this data
+    df.pop('target_item_taxonomy')
+    #df.pop('user_id_hash')
+    #df.pop('target_id_hash')
+    #df.pop('syndicator_id_hash')
+    #df.pop('campaign_id_hash')
+    #df.pop('placement_id_hash')
+    #df.pop('publisher_id_hash')
+    #df.pop('source_id_hash')
+
+    df = df.dropna()  # todo: do we need this?
+
+    return df, ce_target_encoder
+
+
+def builedModel():
+    return RandomForestClassifier(verbose=2, max_depth=3, n_jobs=4)
+
+
+def trainModel(X, y, model):
+    fitBeginTime = time.time()
+    print("start fit dataChunk")
+    model.fit(X, y)
+    print("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
+    return model
+
+
+def normalizeResults(x):
+    if (x < 0.3):
+        return 0
+    if (x > 0.7):
+        return 1
+    else:
+        return x
+
+
+def evaluateModel(X, y, model):
+    testRes = model.predict(X)
+    AUC = roc_auc_score(y, testRes)
+
+    normRes = np.vectorize(normalizeResults)(testRes)
+    AUCNorm = roc_auc_score(y, normRes)
+
+    # todo: Check that the res data is not <0 or >1 and fix if it does
+    print('test: AUC[' + str(AUC) + ']' + 'test: AUCNorm[' + str(AUCNorm) + ']' + str(stats.describe(testRes)))
+
 
 def loadUncompressed(path):
     chunksNum = 0
@@ -87,159 +215,32 @@ def loadUncompressed(path):
     return data
 
 
-def readAndRunZipFiles(model):
-    beginTime = time.time()
-    archive = zipfile.ZipFile('./data/bgu-rs.zip', 'r')
-    for file in archive.filelist:
-        if "part-" in file.filename and ".csv" in file.filename:
-            fileBeginTime = time.time()
-            df = readCSVFromZip(archive, file)
-            df = df.dropna()  # todo: do we need this?
-            trainY = df.pop('is_click')
-            trainX = df
-            print("file handle time[" + str(time.time() - fileBeginTime)+ "]")
-
-    evaluateModel(model, trainX, trainY)
-    print("Epoch time[" + str(time.time() - beginTime) + "]")
-
-
-def normalizeResults(x):
-    if (x < 0.3):
-        return 0
-    if (x > 0.7):
-        return 1
-    else:
-        return x
-
-
-def evaluateModel(model, testX, testY):
-    testRes = model.predict(testX)
-    AUC = roc_auc_score(testY, testRes)
-
-    normRes = np.vectorize(normalizeResults)(testRes)
-    AUCNorm = roc_auc_score(testY, normRes)
-
-    # todo: Check that the res data is not <0 or >1 and fix if it does
-    print(''
-               + 'test: AUC[' + str(AUC) + ']'
-               + 'test: AUCNorm[' + str(AUCNorm) + ']'
-               + str(stats.describe(testRes))
-               )
-
-
-def readCSVFromZip(archive, file):
-    readBeginTime = time.time()
-    fileData = archive.read(file.filename)
-    print("read Zip file took [" + str(time.time() - readBeginTime) + "]")
-    s = str(fileData, 'utf-8')
-    data = StringIO(s)
-    df = pd.read_csv(data)
-    return df
-
-
-def trainModel(X, y, model):
-    fitBeginTime = time.time()
-    print("start fit dataChunk")
-    model.fit(X, y)
-    print("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
-
-
-def transformDataFramesToTFArr(df, target):
-    # https://www.tensorflow.org/tutorials/load_data/pandas_dataframe
-    # Convert column which is an object in the dataframe to a discrete numerical value.
-    # todo: Fix warning  A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
-    # todo: Check that categories are similare between file batches
-    fitBeginTime = time.time()
-    df['user_id_hash'] = pd.Categorical(df['user_id_hash'])
-    df['user_id_hash'] = df.user_id_hash.cat.codes
-    df['target_id_hash'] = pd.Categorical(df['target_id_hash'])
-    df['target_id_hash'] = df.target_id_hash.cat.codes
-    df['syndicator_id_hash'] = pd.Categorical(df['syndicator_id_hash'])
-    df['syndicator_id_hash'] = df.syndicator_id_hash.cat.codes
-    df['campaign_id_hash'] = pd.Categorical(df['campaign_id_hash'])
-    df['campaign_id_hash'] = df.campaign_id_hash.cat.codes
-    df['target_item_taxonomy'] = pd.Categorical(df['target_item_taxonomy'])
-    df['target_item_taxonomy'] = df.target_item_taxonomy.cat.codes
-    df['placement_id_hash'] = pd.Categorical(df['placement_id_hash'])
-    df['placement_id_hash'] = df.placement_id_hash.cat.codes
-    df['publisher_id_hash'] = pd.Categorical(df['publisher_id_hash'])
-    df['publisher_id_hash'] = df.publisher_id_hash.cat.codes
-    df['source_id_hash'] = pd.Categorical(df['source_id_hash'])
-    df['source_id_hash'] = df.source_id_hash.cat.codes
-    df['source_item_type'] = pd.Categorical(df['source_item_type'])
-    df['source_item_type'] = df.source_item_type.cat.codes
-    df['browser_platform'] = pd.Categorical(df['browser_platform'])
-    df['browser_platform'] = df.browser_platform.cat.codes
-    df['country_code'] = pd.Categorical(df['country_code'])
-    df['country_code'] = df.country_code.cat.codes
-    df['region'] = pd.Categorical(df['region'])
-    df['region'] = df.region.cat.codes
-
-    df['os_family'] = pd.Categorical(df['os_family'])
-    df['os_family'] = df.os_family.cat.codes
-    df['day_of_week'] = pd.Categorical(df['day_of_week'])
-    df['day_of_week'] = df.day_of_week.cat.codes
-    print("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
-
-    df.pop('page_view_start_time')
-
-    # time + gmt_offset --> new time ; remove GMT // (save time.. ?)
-    df['time_of_day'] = df['time_of_day'] + (df['gmt_offset'] / 100.0)
-    df.pop('gmt_offset')
-
-    # user click rate, with an option that the user is a cold start
-    df['user_click_rate'] = (df['user_clicks'] + 1) / (df['user_recs'] + 1)
-    # give more meaning to click rate differences # TODO - why multiply 10 times - it is meaningless, no?
-    df['user_click_rate_pow'] = (df['user_click_rate'] * 10).__pow__(2)
-
-    # TODO: We should  find how to use this data
-    df.pop('user_id_hash')
-    df.pop('target_id_hash')
-    df.pop('syndicator_id_hash')
-    df.pop('campaign_id_hash')
-    df.pop('placement_id_hash')
-    df.pop('publisher_id_hash')
-    df.pop('source_id_hash')
-
-    if (target is None):
-        return df.values, None
-    else:
-        return df.values, target.values
-
-
-def builedModel():
-    return RandomForestClassifier(verbose=2, n_jobs=3)
-
-
-def predictOnTest(model):
+def testModel(model, ce_target_encoder):
     testFilewName = "./testData/test_file.csv"
     print("predictOnTest [" + testFilewName + "]")
     dfTest = loadUncompressed(testFilewName)
     IDs = dfTest.pop('Id')
-    test,_ = transformDataFramesToTFArr(dfTest, None)
-    Predicted = model.predict(test)
+    dfTest, _ = preprocessData(dfTest, ce_target_encoder=ce_target_encoder)
+    Predicted = model.predict(dfTest)
     PredictedArr = np.array(Predicted)
+
     res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])
     res.Id = res.Id.astype(int)
-    resFileName = "./models/model_" + str(runStartTime) + "_res.csv"
+    runTime = time.time()
+    resFileName = "./models/model_" + str(runTime) + "_res.csv"
     res.to_csv(resFileName, header=True, index=False)
 
 
 def run():
-    global runStartTime, testNum
-    for testNum in range(0, numOfTests):
-        print('*********************************************')
-        print(''
-                   + 'testNum[' + str(testNum) + ']'
-                   )
-        runStartTime = time.time()
-        model = builedModel()
-        # read the data and fit
-        print("-------------------------------")
-        readAndRunZipFiles(model)
+    # read the data and fit
+    print("-------------------------------")
+    trainX, testX, trainY, testY, ce_target_encoder = readTrainData()
 
-        predictOnTest(model)
-
+    model = builedModel()
+    model = trainModel(trainX, trainY, model)
+    evaluateModel(testX, testY, model)
+    if submit:
+        testModel(model, ce_target_encoder)
 
 run()
 print(" ---- Done ---- ")

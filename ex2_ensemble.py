@@ -19,11 +19,13 @@ import numpy as np
 # TODO (Alex):
 #  DONE: Check why do we have each time two rows of AUC one is always 0.73, while the other is always 0.99889
 #  DONE: Check why we run our tree few times - it should be trained only once
+#  DONE (no information provided about baseline): Check how baseline is calculated
 #  Make tuning to parameters
+#  Try Logistic Regression
 #  Try LightGBM or XGBoost instead of RandomForest
 #  Try to parse column target_item_taxonomy
 #  DONE: Try use columns with 'hash' ending
-#  Check if os_family really categorical
+#  Check if os_family is really categorical
 #  Try cut time_of_day to morning, evening, day, night
 #
 # todo: Plan / feature engeneering\
@@ -74,8 +76,9 @@ import numpy as np
 # dtypes: float64(6), int64(5), object(12)
 ###############################################################################################
 
+
 submit = True
-maxFiles = 40
+maxFiles = 10
 pd.options.display.width = 0
 
 
@@ -168,8 +171,8 @@ def preprocessData(df, y=None, ce_target_encoder=None):
     return df, ce_target_encoder
 
 
-def builedModel():
-    return RandomForestClassifier(verbose=2, n_estimators=1000, max_depth=4, n_jobs=4)
+def builedModel(max_depth, min_samples_split):
+    return RandomForestClassifier(verbose=2, n_estimators=300, max_depth=max_depth, min_samples_split=min_samples_split, n_jobs=4)
 
 
 def trainModel(X, y, model):
@@ -198,6 +201,7 @@ def evaluateModel(X, y, model):
 
     # todo: Check that the res data is not <0 or >1 and fix if it does
     print('test: AUC[' + str(AUC) + ']' + 'test: AUCNorm[' + str(AUCNorm) + ']' + str(stats.describe(testRes)))
+    return AUC
 
 
 def loadUncompressed(path):
@@ -237,11 +241,21 @@ def run():
     print("-------------------------------")
     trainX, testX, trainY, testY, ce_target_encoder = readTrainData()
 
-    model = builedModel()
-    model = trainModel(trainX, trainY, model)
-    evaluateModel(testX, testY, model)
+    best_auc = 0
+    best_model = None
+    for max_depth in [8, 12, 20]:
+        for min_samples_split in [5, 10, 40]:
+            print('Max_depth: [' + str(max_depth) + ']   Min_samples_split: [' + str(min_samples_split) + ']')
+            model = builedModel(max_depth, min_samples_split)
+            model = trainModel(trainX, trainY, model)
+            auc = evaluateModel(testX, testY, model)
+            if auc > best_auc:
+                best_auc = auc
+                best_model = model
+
+    print('Best AUC is: [' + str(best_auc) + ']')
     if submit:
-        testModel(model, ce_target_encoder)
+        testModel(best_model, ce_target_encoder)
 
 run()
 print(" ---- Done ---- ")

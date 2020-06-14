@@ -46,25 +46,27 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 2  # 5
-epochs = 2  # 2
-epochsOfBatch = 2  # 10
+numOfTests = 1  # 5
+epochs = 1  # 2
+epochsOfBatch = 1  # 10
 test = True
 # test = False
-limitNumOfFilesInTest = 2
-loadPercentageTest = 0.7
+limitNumOfFilesInTest = 4
+loadPercentageTest = 0.95
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 layers = [14, 9, 4]
 
-bEnableSVD = False
-bSvdTrained = False
+bEnableSVD = True
 K = 400
 lam = 0.005
 delta = 0.02
-
 input_dim = 15
+bAddSvdToAnn = False
+
 if (bEnableSVD):
-    input_dim = input_dim + 1
+    if (bAddSvdToAnn):
+        input_dim = input_dim + 1
+    epochs = epochs + 1  # first epoch is used for SVD train
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -105,6 +107,8 @@ SVDModel = None
 epochNum = 0
 testNum = 0
 totalLines = 0
+modelFitted = False
+bSvdTrained = False
 
 
 ###########################################
@@ -136,7 +140,7 @@ def train_svd(train_set):
     if (not bEnableSVD):
         printDebug("SVD Disabled")
         return
-    printDebug("SVDModel fit start")
+    printDebug("SVDModel fit start ; file [" + str(numOffilesInEpoch) + "]")
     beginTime = time.time()
     SVDModel.fit(train_set)
     bSvdTrained = True
@@ -192,9 +196,9 @@ def readAndRunZipFiles():
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
             printDebug("user_target_recs max[" + str(df['user_target_recs'].max(axis=0, skipna=True)) + "]")  # debug
-
-            bLearnOnChunk = (not test) or ((limitNumOfFilesInTest > 1) and (limitNumOfFilesInTest <= numOffiles+1)) #dont learn on the last file
-            if(bLearnOnChunk):
+            bLearnOnChunk = (not test) or ((limitNumOfFilesInTest > 1) and (
+                    limitNumOfFilesInTest <= numOffiles + 1))  # don't learn on the last file in test mode - keep if for evaluation
+            if (bLearnOnChunk):
                 testX, testY, trainX, trainY = handleASingleDFChunk(
                     df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY)
                 printDebug("file handle time[" + str(time.time() - fileBeginTime)
@@ -207,9 +211,9 @@ def readAndRunZipFiles():
             if (test):
                 # calcullate error on the validation data
                 # Evaluate the model with a partial part of the incoming data
-                # can have wrong values between teh epochs if different entries are selected for the test (enries taht the model was trained on)
+                # can have wrong values between the epochs if different entries are selected for the test (enries taht the model was trained on)
 
-                evaluateModel(model, testX, testY)
+                evaluateModel(model, testX, testY)  # eval on every file
 
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
@@ -220,7 +224,7 @@ def readAndRunZipFiles():
         # after every epoch - evaluate teh last trained file
         xCopy = df.copy()
         yCopy = xCopy.pop('is_click')
-        evaluateModel(model, xCopy, yCopy)
+        evaluateModel(model, xCopy, yCopy)  # eval on last file in the epoch
 
     # print each epoch - with the file name
     printDebug("Epoch time[" + str(time.time() - epochBeginTime) + "]epochNum[" + str(epochNum) + "]")
@@ -248,27 +252,38 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
 
     ########################
     # SVD
+    bFitModel = True
     if (bEnableSVD):
-        addSvdDataToTheDFChunk(SVDModel, trainX, trainY)
         if (epochNum < 1):
+            bFitModel = False
             trainSVDWithCurrentDataChunk(trainX, trainY)
+            printDebug(
+                "train SVD "
+                + "numOffilesInEpoch[" + str(numOffilesInEpoch) + "]"
+                + "numOffiles[" + str(numOffiles) + "]"
+                + "epochNum[" + str(epochNum) + "]"
+            )
+        else:
+            addSvdDataToTheDFChunk(SVDModel, trainX, trainY)
     ########################
 
-    handleDataChunk(trainX, trainY)
-    printDebug(
-        "handled lines[" + str(df.__len__()) + "]"
-        + "total[" + str(totalLines) + "]"
-        + "numOffilesInEpoch[" + str(numOffilesInEpoch) + "]"
-        + "numOffiles[" + str(numOffiles) + "]"
-        + "epochNum[" + str(epochNum) + "]"
-    )
-    totalLines = totalLines + df.__len__()
+    if (bFitModel):
+        # if we use SVD - we'll fit the maion model using the SVD Data - first epoch is dedicated for this
+        handleDataChunk(trainX, trainY)
+        printDebug(
+            "handled lines[" + str(df.__len__()) + "]"
+            + "total[" + str(totalLines) + "]"
+            + "numOffilesInEpoch[" + str(numOffilesInEpoch) + "]"
+            + "numOffiles[" + str(numOffiles) + "]"
+            + "epochNum[" + str(epochNum) + "]"
+        )
+        totalLines = totalLines + df.__len__()
     return testX, testY, trainX, trainY
 
 
 def addSvdDataToTheDFChunk(SVDModel, X, Y):
     # calculate SVD data from prev batches into this batch - if there is a model
-    if (not bEnableSVD):
+    if ((not bEnableSVD) or (not bAddSvdToAnn)):
         return
 
     if (bSvdTrained):
@@ -276,10 +291,6 @@ def addSvdDataToTheDFChunk(SVDModel, X, Y):
         X['svdUserTarget'] = testing_predictions
         # We want the ANN to use the SVD predicted data and not the calulated one that is provided to the SVD
         # since this is what it will get oin the test as well
-    else:
-        X['svdUserTarget'] = \
-            Y * ((120 - (X['user_target_recs'])) / 120)  # only in the first batch we will use this actual data
-        # todo: Add some Random here to avoid bias
 
 
 def predictWithSVD(SVDModel, X):
@@ -309,7 +320,8 @@ def createDataFrameForSvdTrain(X, Y):
         'is_click': Y
     }
     df_train_svd = pd.DataFrame(data=train_svd_data)
-    df_train_svd['rate'] = df_train_svd['is_click'] * ((120 - (df_train_svd['user_target_recs'])) / 120)
+    # df_train_svd['rate'] = df_train_svd['is_click'] * ((120 - (df_train_svd['user_target_recs'])) / 120)
+    df_train_svd['rate'] = df_train_svd['is_click']
     df_train_svd.pop('user_target_recs')
     df_train_svd.pop('is_click')
     return df_train_svd
@@ -327,17 +339,21 @@ def createDataFrameForSvdPredict(df):
 
 
 def normalizeResults(x):
-    if (x < 0):
+    if (x < 0.38):
         return 0
     else:
-        if (x > 1):
+        if (x > 0.62):
             return 1
         else:
             return x
 
 
 def evaluateModel(model, testX, testY):
+    if (not modelFitted):
+        printDebug("evaluateModel skipped - model was not fit yet")
+        return
     AUCSVD = 0
+    AUCEnsamble = 0
     if (bSvdTrained):
         xCopy = testX.copy()
         yCopy = testY.copy()
@@ -345,14 +361,24 @@ def evaluateModel(model, testX, testY):
         m = tf.keras.metrics.AUC()
         m.update_state(yCopy.values, testResSvd)
         AUCSVD = m.result().numpy()
+        if (bAddSvdToAnn):
+            testX['svdUserTarget'] = testResSvd
 
+    # main model (with or without SVD in to teh ANN)
     testX, testY = transformDataFramesToTFArr(testX, testY)
-
     testRes = model.predict(testX)
     m = tf.keras.metrics.AUC()
     m.update_state(testY, testRes.flatten())
     AUC = m.result().numpy()
 
+    # ensamble
+    if (bSvdTrained):
+        ensambleRes = (testRes.flatten() + testResSvd) / 2
+        m = tf.keras.metrics.AUC()
+        m.update_state(testY, ensambleRes)
+        AUCEnsamble = m.result().numpy()
+
+    # Normalized version
     normRes = np.vectorize(normalizeResults)(testRes.flatten())
     m.reset_states()
     m.update_state(testY, normRes)
@@ -363,6 +389,7 @@ def evaluateModel(model, testX, testY):
                + 'test: AUC[' + str(AUC) + ']'
                + 'AUCNorm[' + str(AUCNorm) + ']'
                + 'AUCSVD[' + str(AUCSVD) + ']'
+               + 'AUCEnsamble[' + str(AUCEnsamble) + ']'
                + 'layers[' + str(layers) + ']'
                + 'Epoch[' + str(epochNum) + ']'
                + str(stats.describe(testRes))
@@ -390,6 +417,7 @@ def handleDataChunk(df, target):
 
 def fitAnn(df, target):
     global model
+    global modelFitted
     X, y = transformDataFramesToTFArr(df, target)
     # fit Model with chunk Data
     fitBeginTime = time.time()
@@ -408,6 +436,7 @@ def fitAnn(df, target):
               workers=3
               # ,callbacks=[cp_callback]
               )
+    modelFitted = True
     printDebug("fit dataChunk took[" + str(time.time() - fitBeginTime) + "]")
     # loss, accuracy = model.evaluate(X, y)
     # printDebug('Accuracy: %.2f' % (accuracy * 100))
@@ -507,7 +536,7 @@ def builedSvdModel(K, lam, delta):
     if (not bEnableSVD):
         return
     # SVDModel = SVD(n_factors=K, lr_all=lam, reg_all=delta)
-    SVDModel = NMF(n_factors=300)
+    SVDModel = SVD(n_factors=300)
 
 
 def builedModel():
@@ -541,13 +570,14 @@ def predictOnTest():
     printDebug("predictOnTest [" + testFilewName + "]")
     dfTest = loadUncompressed(testFilewName)
     IDs = dfTest.pop('Id')
+    testResSvd = None
 
     if (bEnableSVD):
         if (bSvdTrained):
             # predict on the test data using SVD
             testResSvd = predictWithSVD(SVDModel, dfTest)
-            # use SVD data as input in the test data for the ANN
-            dfTest['svdUserTarget'] = testResSvd
+            if (bAddSvdToAnn):  # use SVD data as input in the test data for the ANN
+                dfTest['svdUserTarget'] = testResSvd
             # write SVD res to file
             res = pd.DataFrame({'Id': IDs, 'Predicted': testResSvd}, columns=['Id', 'Predicted'])
             res.Id = res.Id.astype(int)
@@ -559,11 +589,19 @@ def predictOnTest():
     test, _ = transformDataFramesToTFArr(dfTest, None)
     Predicted = model.predict(test)
     PredictedArr = np.array(Predicted)
-
     res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])
     res.Id = res.Id.astype(int)
     resFileName = "./models/model_" + str(runStartTime) + "_res.csv"
     res.to_csv(resFileName, header=True, index=False)
+
+    # ensamble
+    if (bSvdTrained):
+        ensambleRes = (Predicted.flatten() + testResSvd) / 2
+        # write ensamble res to file
+        res = pd.DataFrame({'Id': IDs, 'Predicted': ensambleRes}, columns=['Id', 'Predicted'])
+        res.Id = res.Id.astype(int)
+        resFileName = "./models/modelEnsamble_" + str(runStartTime) + "_res.csv"
+        res.to_csv(resFileName, header=True, index=False)
 
 
 def saveModel():

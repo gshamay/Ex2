@@ -14,6 +14,7 @@ from scipy import stats
 import pickle
 import numpy as np
 
+from surprise import NMF
 from surprise import SVD
 from surprise import Dataset
 from surprise import Reader
@@ -45,18 +46,25 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 5  # 5
+numOfTests = 2  # 5
 epochs = 2  # 2
-epochsOfBatch = 4  # 4
+epochsOfBatch = 2  # 10
 test = True
-test = False
-limitNumOfFilesInTest = 3
+# test = False
+limitNumOfFilesInTest = 2
+loadPercentageTest = 0.7
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
-layers = [13, 8, 3]
-K = 400
-lam = 0.03
-delta = 0.07
+layers = [14, 9, 4]
+
+bEnableSVD = False
 bSvdTrained = False
+K = 400
+lam = 0.005
+delta = 0.02
+
+input_dim = 15
+if (bEnableSVD):
+    input_dim = input_dim + 1
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -122,40 +130,17 @@ def saveModelToFile(dumpFileFullPath):
 
 ##############################################################
 
-def load_trainset(path):
-    df_train = load(path)
-    df_train = df_train.dropna()
-    df_train = df_train[['user_id', 'business_id', 'stars']]
-    reader = Reader(rating_scale=(1, 10))
-    train_data = Dataset.load_from_df(df_train, reader)
-    train_set = train_data.build_full_trainset()
-    return train_set
-
-
-def load_testset(path):
-    df_test = load(path)
-    df_test = df_test.dropna()
-    df_test = df_test[['user_id', 'business_id', 'stars']]
-    test_set = [tuple(x) for x in df_test.to_numpy()]
-    return test_set
-
 
 def train_svd(train_set):
     global SVDModel, bSvdTrained
+    if (not bEnableSVD):
+        printDebug("SVD Disabled")
+        return
     printDebug("SVDModel fit start")
     beginTime = time.time()
     SVDModel.fit(train_set)
     bSvdTrained = True
     printDebug("SVDModel fit took[" + str(time.time() - beginTime) + "]")
-
-
-def test_svd(test_set, model):
-    print("Test Surprise SVD")
-    testing_predictions = model.test(test_set)
-    testing_rmse_score = accuracy.rmse(testing_predictions)
-    testing_mae_score = accuracy.mae(testing_predictions)
-    print('Testing RMSE score: {}'.format(testing_rmse_score))
-    print('Testing MAE score: {}'.format(testing_mae_score))
 
 
 ##############################################################
@@ -207,29 +192,36 @@ def readAndRunZipFiles():
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
             printDebug("user_target_recs max[" + str(df['user_target_recs'].max(axis=0, skipna=True)) + "]")  # debug
-            testX, testY, trainX, trainY = handleASingleDFChunk(
-                df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY)
-            printDebug("file handle time[" + str(time.time() - fileBeginTime)
-                       + "]epochNum[" + str(epochNum)
-                       + "]numOffilesInEpoch[" + str(numOffilesInEpoch)
-                       + "]")
+
+            bLearnOnChunk = (not test) or ((limitNumOfFilesInTest > 1) and (limitNumOfFilesInTest <= numOffiles+1)) #dont learn on the last file
+            if(bLearnOnChunk):
+                testX, testY, trainX, trainY = handleASingleDFChunk(
+                    df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY)
+                printDebug("file handle time[" + str(time.time() - fileBeginTime)
+                           + "]epochNum[" + str(epochNum)
+                           + "]numOffilesInEpoch[" + str(numOffilesInEpoch)
+                           + "]")
+            else:
+                printDebug("this file is used for evaluation")
+
             if (test):
                 # calcullate error on the validation data
                 # Evaluate the model with a partial part of the incoming data
                 # can have wrong values between teh epochs if different entries are selected for the test (enries taht the model was trained on)
 
-                # evaluateModel(model, testX, testY, True)
+                evaluateModel(model, testX, testY)
 
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
                     break
 
-    # test each epoch - using the last read file any way
+    # test each epoch - using the last read file any way - in test mode this file is not being trained on and in production it is
     if (totalLines > 0):
         # after every epoch - evaluate teh last trained file
         xCopy = df.copy()
         yCopy = xCopy.pop('is_click')
-        evaluateModel(model, trainX, trainY, False, xCopy, yCopy)
+        evaluateModel(model, xCopy, yCopy)
+
     # print each epoch - with the file name
     printDebug("Epoch time[" + str(time.time() - epochBeginTime) + "]epochNum[" + str(epochNum) + "]")
     printToFile(
@@ -248,16 +240,18 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
 
     if (test):
         printDebug("test mode - split train/validations")
-        trainX, testX, trainY, testY = train_test_split(df, target, test_size=0.99, random_state=seed)
+        trainX, testX, trainY, testY = train_test_split(df, target, test_size=(1 - loadPercentageTest),
+                                                        random_state=seed)
     else:
         trainX = df
         trainY = target
 
     ########################
     # SVD
-    addSvdDataToTheDFChunk(SVDModel, trainX, trainY)
-    if(epochNum < 1):
-        trainSVDWithCurrentDataChunk(trainX, trainY)
+    if (bEnableSVD):
+        addSvdDataToTheDFChunk(SVDModel, trainX, trainY)
+        if (epochNum < 1):
+            trainSVDWithCurrentDataChunk(trainX, trainY)
     ########################
 
     handleDataChunk(trainX, trainY)
@@ -274,6 +268,9 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
 
 def addSvdDataToTheDFChunk(SVDModel, X, Y):
     # calculate SVD data from prev batches into this batch - if there is a model
+    if (not bEnableSVD):
+        return
+
     if (bSvdTrained):
         testing_predictions = predictWithSVD(SVDModel, X)
         X['svdUserTarget'] = testing_predictions
@@ -282,7 +279,7 @@ def addSvdDataToTheDFChunk(SVDModel, X, Y):
     else:
         X['svdUserTarget'] = \
             Y * ((120 - (X['user_target_recs'])) / 120)  # only in the first batch we will use this actual data
-        #todo: Add some Random here to avoid bias 
+        # todo: Add some Random here to avoid bias
 
 
 def predictWithSVD(SVDModel, X):
@@ -330,27 +327,26 @@ def createDataFrameForSvdPredict(df):
 
 
 def normalizeResults(x):
-    if (x < 0.3):
+    if (x < 0):
         return 0
-    if (x > 0.7):
-        return 1
     else:
-        return x
+        if (x > 1):
+            return 1
+        else:
+            return x
 
 
-def evaluateModel(model, testX, testY, bTransform, xCopy, yCopy):
+def evaluateModel(model, testX, testY):
     AUCSVD = 0
     if (bSvdTrained):
+        xCopy = testX.copy()
+        yCopy = testY.copy()
         testResSvd = predictWithSVD(SVDModel, xCopy)
         m = tf.keras.metrics.AUC()
         m.update_state(yCopy.values, testResSvd)
         AUCSVD = m.result().numpy()
 
-    if (bTransform):
-        testX, testY = transformDataFramesToTFArr(testX, testY)
-    else:
-        testX = testX.values
-        testY = testY.values
+    testX, testY = transformDataFramesToTFArr(testX, testY)
 
     testRes = model.predict(testX)
     m = tf.keras.metrics.AUC()
@@ -446,14 +442,15 @@ def transformDataFramesToTFArr(df, target):
     df['syndicator_id_hash'] = df.syndicator_id_hash.cat.codes
     df['campaign_id_hash'] = pd.Categorical(df['campaign_id_hash'])
     df['campaign_id_hash'] = df.campaign_id_hash.cat.codes
-    df['target_item_taxonomy'] = pd.Categorical(df['target_item_taxonomy'])
-    df['target_item_taxonomy'] = df.target_item_taxonomy.cat.codes
     df['placement_id_hash'] = pd.Categorical(df['placement_id_hash'])
     df['placement_id_hash'] = df.placement_id_hash.cat.codes
     df['publisher_id_hash'] = pd.Categorical(df['publisher_id_hash'])
     df['publisher_id_hash'] = df.publisher_id_hash.cat.codes
     df['source_id_hash'] = pd.Categorical(df['source_id_hash'])
     df['source_id_hash'] = df.source_id_hash.cat.codes
+
+    df['target_item_taxonomy'] = pd.Categorical(df['target_item_taxonomy'])
+    df['target_item_taxonomy'] = df.target_item_taxonomy.cat.codes
     df['source_item_type'] = pd.Categorical(df['source_item_type'])
     df['source_item_type'] = df.source_item_type.cat.codes
     df['browser_platform'] = pd.Categorical(df['browser_platform'])
@@ -462,9 +459,9 @@ def transformDataFramesToTFArr(df, target):
     df['country_code'] = df.country_code.cat.codes
     df['region'] = pd.Categorical(df['region'])
     df['region'] = df.region.cat.codes
-
     df['os_family'] = pd.Categorical(df['os_family'])
     df['os_family'] = df.os_family.cat.codes
+
     df['day_of_week'] = pd.Categorical(df['day_of_week'])
     df['day_of_week'] = df.day_of_week.cat.codes
     # printDebug(str(df.info()))
@@ -482,7 +479,7 @@ def transformDataFramesToTFArr(df, target):
     # give more meaning to click rate differences
     df['user_click_rate_pow'] = (df['user_click_rate'] * 10).__pow__(2)
 
-    # todo: We should  find how to use this data
+    # todo: We should  find how to use categorial data
     df.pop('user_id_hash')
     df.pop('target_id_hash')
     df.pop('syndicator_id_hash')
@@ -490,6 +487,13 @@ def transformDataFramesToTFArr(df, target):
     df.pop('placement_id_hash')
     df.pop('publisher_id_hash')
     df.pop('source_id_hash')
+
+    # df.pop('target_item_taxonomy')
+    # df.pop('source_item_type')
+    # df.pop('browser_platform')
+    # df.pop('country_code')
+    # df.pop('region')
+    # df.pop('os_family')
 
     printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
     if (target is None):
@@ -500,7 +504,10 @@ def transformDataFramesToTFArr(df, target):
 
 def builedSvdModel(K, lam, delta):
     global SVDModel
-    SVDModel = SVD(n_factors=K, lr_all=lam, reg_all=delta)
+    if (not bEnableSVD):
+        return
+    # SVDModel = SVD(n_factors=K, lr_all=lam, reg_all=delta)
+    SVDModel = NMF(n_factors=300)
 
 
 def builedModel():
@@ -518,7 +525,7 @@ def builedModel():
     ]
     loss = tf.keras.losses.BinaryCrossentropy()
     optimizer = tf.keras.optimizers.Adam(lr=1e-3)
-    model.add(Dense(layers[0], input_dim=16, activation='sigmoid'))
+    model.add(Dense(layers[0], input_dim=input_dim, activation='sigmoid'))
     model.add(Dense(layers[1], activation='sigmoid'))
     # model.add(Dense(layers[1], activation='relu'))
     # model.add(Dense(layers[1], activation='relu'))
@@ -535,18 +542,19 @@ def predictOnTest():
     dfTest = loadUncompressed(testFilewName)
     IDs = dfTest.pop('Id')
 
-    if (bSvdTrained):
-        # predict on the test data using SVD
-        testResSvd = predictWithSVD(SVDModel, dfTest)
-        # use SVD data as input in the test data for the ANN
-        dfTest['svdUserTarget'] = testResSvd
-        # write SVD res to file
-        res = pd.DataFrame({'Id': IDs, 'Predicted': testResSvd}, columns=['Id', 'Predicted'])
-        res.Id = res.Id.astype(int)
-        resFileName = "./models/modelSvd_" + str(runStartTime) + "_res.csv"
-        res.to_csv(resFileName, header=True, index=False)
-    else:
-        printDebug("Error - Check SVD status")
+    if (bEnableSVD):
+        if (bSvdTrained):
+            # predict on the test data using SVD
+            testResSvd = predictWithSVD(SVDModel, dfTest)
+            # use SVD data as input in the test data for the ANN
+            dfTest['svdUserTarget'] = testResSvd
+            # write SVD res to file
+            res = pd.DataFrame({'Id': IDs, 'Predicted': testResSvd}, columns=['Id', 'Predicted'])
+            res.Id = res.Id.astype(int)
+            resFileName = "./models/modelSvd_" + str(runStartTime) + "_res.csv"
+            res.to_csv(resFileName, header=True, index=False)
+        else:
+            printDebug("Error - Check SVD status")
 
     test, _ = transformDataFramesToTFArr(dfTest, None)
     Predicted = model.predict(test)

@@ -46,11 +46,11 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 1  # 5
-epochs = 1  # 2
-epochsOfBatch = 1  # 10
+numOfTests = 5
+epochs = 2  # 2
+epochsOfBatch = 3  # 10
 test = True
-# test = False
+test = False
 limitNumOfFilesInTest = 4
 loadPercentageTest = 0.95
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
@@ -196,8 +196,10 @@ def readAndRunZipFiles():
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
             printDebug("user_target_recs max[" + str(df['user_target_recs'].max(axis=0, skipna=True)) + "]")  # debug
-            bLearnOnChunk = (not test) or ((limitNumOfFilesInTest > 1) and (
-                    limitNumOfFilesInTest <= numOffiles + 1))  # don't learn on the last file in test mode - keep if for evaluation
+            bLearnOnChunk = (not test) or \
+                            ((limitNumOfFilesInTest > 1) and
+                             (limitNumOfFilesInTest >= numOffilesInEpoch + 1))
+            # don't learn on the last file in test mode - keep if for evaluation
             if (bLearnOnChunk):
                 testX, testY, trainX, trainY = handleASingleDFChunk(
                     df, numOffiles, numOffilesInEpoch, testX, testY, trainX, trainY)
@@ -216,7 +218,7 @@ def readAndRunZipFiles():
                 evaluateModel(model, testX, testY)  # eval on every file
 
                 # test using a few files only
-                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffiles)):
+                if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffilesInEpoch)):
                     break
 
     # test each epoch - using the last read file any way - in test mode this file is not being trained on and in production it is
@@ -352,6 +354,7 @@ def evaluateModel(model, testX, testY):
     if (not modelFitted):
         printDebug("evaluateModel skipped - model was not fit yet")
         return
+    printDebug("evaluateModel")
     AUCSVD = 0
     AUCEnsamble = 0
     if (bSvdTrained):
@@ -406,7 +409,8 @@ def readCSVFromZip(archive, file):
     s = str(fileData, 'utf-8')
     data = StringIO(s)
     df = pd.read_csv(data)
-    printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "][" + str(numOffiles) + "]")
+    printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "]numOffiles[" + str(
+        numOffiles) + "]numOffilesInEpoch[" + str(numOffilesInEpoch) + "]")
     return df
 
 

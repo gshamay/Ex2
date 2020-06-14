@@ -75,7 +75,7 @@ import numpy as np
 ###############################################################################################
 
 submit = True
-maxFiles = 2
+maxFiles = 40
 pd.options.display.width = 0
 
 
@@ -102,7 +102,7 @@ def readTrainData():
                 new_df = readCSVFromZip(archive, file)
                 df = pd.concat([df, new_df])
 
-            print("file handle time[" + str(time.time() - fileBeginTime)+ "]")
+            print("file: " + str(i) + " handle time[" + str(time.time() - fileBeginTime)+ "]")
             i = i+1
 
     trainDf, testDf = train_test_split(df, test_size=0.99, random_state=seed)
@@ -115,11 +115,12 @@ def readTrainData():
     testX = testDf
     testX, ce_target_encoder = preprocessData(testX, ce_target_encoder=ce_target_encoder)
     print(testX.describe())
+    print("Number of rows in train: " + str(trainX.shape[0]))
     print("Epoch time[" + str(time.time() - beginTime) + "]")
     return trainX, testX, trainY, testY, ce_target_encoder
 
 
-def target_encode_column(X, y, categorical_columns):
+def target_encode(X, y, categorical_columns):
     ce_target_encoder = ce.TargetEncoder(cols=categorical_columns, min_samples_leaf=10)
     ce_target_encoder.fit(X, y)
     X = ce_target_encoder.transform(X)
@@ -136,7 +137,7 @@ def preprocessData(df, y=None, ce_target_encoder=None):
         df[column_name] = pd.Categorical(df[column_name])
 
     if ce_target_encoder==None:
-        df, ce_target_encoder = target_encode_column(df, y, categorical_columns)
+        df, ce_target_encoder = target_encode(df, y, categorical_columns)
     else:
         df = ce_target_encoder.transform(df)
 
@@ -168,7 +169,7 @@ def preprocessData(df, y=None, ce_target_encoder=None):
 
 
 def builedModel():
-    return RandomForestClassifier(verbose=2, max_depth=3, n_jobs=4)
+    return RandomForestClassifier(verbose=2, n_estimators=1000, max_depth=4, n_jobs=4)
 
 
 def trainModel(X, y, model):

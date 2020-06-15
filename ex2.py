@@ -27,16 +27,17 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 2
-epochs = 1  # 2
-epochsOfBatch = 2  # 10
+numOfTests = 5
+epochs = 2  # 2
+epochsOfBatch = 5  # 10
 test = True
-test = False
+#test = False
 limitNumOfFilesInTest = 3
 loadPercentageTest = 0.05
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 layers = [14, 9, 4]
 bEnableSVD = False
+bEnableSVD = True
 K = 400
 lam = 0.005
 delta = 0.02
@@ -228,6 +229,7 @@ def readAndRunZipFiles():
         if ("part-" in file.filename and ".csv" in file.filename):
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
+            df = df.sample(frac=1)  # shuffle the data
             bLearnOnChunk = (not test) or \
                             ((limitNumOfFilesInTest > 1) and
                              (limitNumOfFilesInTest >= numOffilesInEpoch + 1))
@@ -246,7 +248,7 @@ def readAndRunZipFiles():
                 # calcullate error on the validation data
                 # Evaluate the model with a partial part of the incoming data
                 # can have wrong values between the epochs if different entries are selected for the test (enries taht the model was trained on)
-                if(bLearnOnChunk):
+                if (bLearnOnChunk):
                     printDebug("evaluate the model on a portion of every file")
                     # evaluateModel(model, testX, testY)  # eval on every file
 
@@ -492,6 +494,8 @@ def featureEngeneering(df, target):
     # Convert column which is an object in the dataframe to a discrete numerical value.
     # todo: Fix warning  A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
     # todo: Check that categories are similare between file batches
+
+    printDebug("featureEngeneering begin")
     fitBeginTime = time.time()
 
     # Create categorials

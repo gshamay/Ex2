@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from scipy import stats
 import pickle
 import numpy as np
+import category_encoders as ce
 
 from surprise import NMF
 from surprise import SVD
@@ -22,6 +23,24 @@ from surprise import accuracy
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
 # (tf.version.GIT_VERSION, tf.version.VERSION) --> # v2.0.0-rc2-26-g64c3d382ca 2.0.0
+
+###########################################################################
+# parameters for Debug
+# Todo: in Debug - change here
+numOfTests = 2
+epochs = 1  # 2
+epochsOfBatch = 2  # 10
+test = True
+test = False
+limitNumOfFilesInTest = 3
+loadPercentageTest = 0.05
+basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
+layers = [14, 9, 4]
+bEnableSVD = False
+K = 400
+lam = 0.005
+delta = 0.02
+bAddSvdToAnn = False
 ###########################################################################
 # todo: Plan / feature engeneering\
 #  DONE - consider remove first time value
@@ -29,9 +48,9 @@ from surprise import accuracy
 #  Done - calculate user click rate #  user -> targets + num seen #user that cliced more then once --> may click it again
 #  DONE - find how to use this data w/o harming the accuracy - try to remove user / target / anything that is not common
 #  Done - Creare SVD - user - item using the user recs to the target
-#  Add SVD as input to the ANN (Hybrid)
-#  Add SVD ensamble
-#  SVD of more categorials
+#  DONE - Add SVD as input to the ANN (Hybrid)
+#  DONE- Add SVD ensamble
+#  SVD of more categorials - into the model
 #  one HOT to some of the parameters
 #  create a shared category between the different file batch so the same values will be used for all batches
 #  consider use LSTM
@@ -43,30 +62,7 @@ from surprise import accuracy
 #  date/time  --> date features
 #  emphesize the connection between    user_recs    user_clicks    user_target_recs
 #  one may be removed browser_platform and os_family // (save time..?)
-###########################################################################
-# parameters for Debug
-# Todo: in Debug - change here
-numOfTests = 5
-epochs = 2  # 2
-epochsOfBatch = 3  # 10
-test = True
-test = False
-limitNumOfFilesInTest = 4
-loadPercentageTest = 0.95
-basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
-layers = [14, 9, 4]
 
-bEnableSVD = True
-K = 400
-lam = 0.005
-delta = 0.02
-input_dim = 15
-bAddSvdToAnn = False
-
-if (bEnableSVD):
-    if (bAddSvdToAnn):
-        input_dim = input_dim + 1
-    epochs = epochs + 1  # first epoch is used for SVD train
 ###########################################################################
 # the DATA
 # Data columns (total 23 columns):
@@ -109,6 +105,18 @@ testNum = 0
 totalLines = 0
 modelFitted = False
 bSvdTrained = False
+ce_target_encoders = []
+categorical_columns = ['user_id_hash', 'target_id_hash', 'syndicator_id_hash', 'campaign_id_hash',
+                       'target_item_taxonomy', 'placement_id_hash', 'publisher_id_hash', 'source_id_hash',
+                       'source_item_type', 'browser_platform', 'country_code', 'region',
+                       'os_family', 'day_of_week']
+
+input_dim = 22
+if (bEnableSVD):
+    if (bAddSvdToAnn):
+        input_dim = input_dim + 1  # the input of the SVD out to the ANN
+
+epochs = epochs + 1  # first epoch is used for SVD  and  cat encoders train
 
 
 ###########################################
@@ -130,6 +138,31 @@ def printToFile(fileName):
 def saveModelToFile(dumpFileFullPath):
     with open(dumpFileFullPath, 'wb') as fp:
         pickle.dump(model, fp)
+
+
+##############################################################
+
+def target_encode(X, y, categorical_columns):
+    ce_target_encoder = ce.TargetEncoder(cols=categorical_columns, min_samples_leaf=14)
+    ce_target_encoder.fit(X, y)
+    X = ce_target_encoder.transform(X)
+    return X, ce_target_encoder
+
+
+def testCat(df, y):
+    global ce_target_encoder
+    categorical_columns = ['user_id_hash', 'target_id_hash', 'syndicator_id_hash', 'campaign_id_hash',
+                           'target_item_taxonomy', 'placement_id_hash', 'publisher_id_hash', 'source_id_hash',
+                           'source_item_type', 'browser_platform', 'country_code', 'region',
+                           'os_family', 'day_of_week']
+    for column_name in categorical_columns:
+        df[column_name] = pd.Categorical(df[column_name])
+
+    if ce_target_encoder == None:
+        df, ce_target_encoder = target_encode(df, y, categorical_columns)
+    else:
+        df = ce_target_encoder.transform(df)
+    return df
 
 
 ##############################################################
@@ -195,7 +228,6 @@ def readAndRunZipFiles():
         if ("part-" in file.filename and ".csv" in file.filename):
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
-            printDebug("user_target_recs max[" + str(df['user_target_recs'].max(axis=0, skipna=True)) + "]")  # debug
             bLearnOnChunk = (not test) or \
                             ((limitNumOfFilesInTest > 1) and
                              (limitNumOfFilesInTest >= numOffilesInEpoch + 1))
@@ -208,14 +240,15 @@ def readAndRunZipFiles():
                            + "]numOffilesInEpoch[" + str(numOffilesInEpoch)
                            + "]")
             else:
-                printDebug("this file is used for evaluation")
+                printDebug("Last file in batch - this file is used for evaluation")
 
             if (test):
                 # calcullate error on the validation data
                 # Evaluate the model with a partial part of the incoming data
                 # can have wrong values between the epochs if different entries are selected for the test (enries taht the model was trained on)
-
-                evaluateModel(model, testX, testY)  # eval on every file
+                if(bLearnOnChunk):
+                    printDebug("evaluate the model on a portion of every file")
+                    # evaluateModel(model, testX, testY)  # eval on every file
 
                 # test using a few files only
                 if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffilesInEpoch)):
@@ -255,9 +288,11 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
     ########################
     # SVD
     bFitModel = True
+    if (epochNum < 1):
+        bFitModel = False
+
     if (bEnableSVD):
-        if (epochNum < 1):
-            bFitModel = False
+        if (not bFitModel):
             trainSVDWithCurrentDataChunk(trainX, trainY)
             printDebug(
                 "train SVD "
@@ -267,11 +302,14 @@ def handleASingleDFChunk(df, numOffiles, numOffilesInEpoch, testX, testY, trainX
             )
         else:
             addSvdDataToTheDFChunk(SVDModel, trainX, trainY)
-    ########################
 
+    ########################
+    X, y = featureEngeneering(trainX, trainY)  # fit model
     if (bFitModel):
         # if we use SVD - we'll fit the maion model using the SVD Data - first epoch is dedicated for this
-        handleDataChunk(trainX, trainY)
+
+        fitAnn(X, y)
+
         printDebug(
             "handled lines[" + str(df.__len__()) + "]"
             + "total[" + str(totalLines) + "]"
@@ -368,7 +406,7 @@ def evaluateModel(model, testX, testY):
             testX['svdUserTarget'] = testResSvd
 
     # main model (with or without SVD in to teh ANN)
-    testX, testY = transformDataFramesToTFArr(testX, testY)
+    testX, testY = featureEngeneering(testX, testY)  # evaluadte model
     testRes = model.predict(testX)
     m = tf.keras.metrics.AUC()
     m.update_state(testY, testRes.flatten())
@@ -414,15 +452,9 @@ def readCSVFromZip(archive, file):
     return df
 
 
-def handleDataChunk(df, target):
-    keepStatisticalData()
-    fitAnn(df, target)
-
-
-def fitAnn(df, target):
+def fitAnn(X, y):
     global model
     global modelFitted
-    X, y = transformDataFramesToTFArr(df, target)
     # fit Model with chunk Data
     fitBeginTime = time.time()
     printDebug("start fit dataChunk epochNum[" + str(epochNum) + "]epochs[" + str(epochs) + "]")
@@ -454,53 +486,100 @@ def generateModelFileName(basePath):
     return checkpoint_path
 
 
-def keepStatisticalData():
-    pass
-    # statistical data
-    # currentUsers = df['user_id_hash'].unique()
-    # currentTargets = df['target_id_hash'].unique()
-
-
-def transformDataFramesToTFArr(df, target):
+def featureEngeneering(df, target):
+    global ce_target_encoders
     # https://www.tensorflow.org/tutorials/load_data/pandas_dataframe
     # Convert column which is an object in the dataframe to a discrete numerical value.
     # todo: Fix warning  A value is trying to be set on a copy of a slice from a DataFrame.  # Try using .loc[row_indexer,col_indexer] = value instead
     # todo: Check that categories are similare between file batches
     fitBeginTime = time.time()
-    df['user_id_hash'] = pd.Categorical(df['user_id_hash'])
-    df['user_id_hash'] = df.user_id_hash.cat.codes
-    df['target_id_hash'] = pd.Categorical(df['target_id_hash'])
-    df['target_id_hash'] = df.target_id_hash.cat.codes
-    df['syndicator_id_hash'] = pd.Categorical(df['syndicator_id_hash'])
-    df['syndicator_id_hash'] = df.syndicator_id_hash.cat.codes
-    df['campaign_id_hash'] = pd.Categorical(df['campaign_id_hash'])
-    df['campaign_id_hash'] = df.campaign_id_hash.cat.codes
-    df['placement_id_hash'] = pd.Categorical(df['placement_id_hash'])
-    df['placement_id_hash'] = df.placement_id_hash.cat.codes
-    df['publisher_id_hash'] = pd.Categorical(df['publisher_id_hash'])
-    df['publisher_id_hash'] = df.publisher_id_hash.cat.codes
-    df['source_id_hash'] = pd.Categorical(df['source_id_hash'])
-    df['source_id_hash'] = df.source_id_hash.cat.codes
 
-    df['target_item_taxonomy'] = pd.Categorical(df['target_item_taxonomy'])
-    df['target_item_taxonomy'] = df.target_item_taxonomy.cat.codes
-    df['source_item_type'] = pd.Categorical(df['source_item_type'])
-    df['source_item_type'] = df.source_item_type.cat.codes
-    df['browser_platform'] = pd.Categorical(df['browser_platform'])
-    df['browser_platform'] = df.browser_platform.cat.codes
-    df['country_code'] = pd.Categorical(df['country_code'])
-    df['country_code'] = df.country_code.cat.codes
-    df['region'] = pd.Categorical(df['region'])
-    df['region'] = df.region.cat.codes
-    df['os_family'] = pd.Categorical(df['os_family'])
-    df['os_family'] = df.os_family.cat.codes
+    # Create categorials
+    # df['user_id_hash'] = pd.Categorical(df['user_id_hash'])
+    # df['user_id_hash'] = df.user_id_hash.cat.codes
+    # df['target_id_hash'] = pd.Categorical(df['target_id_hash'])
+    # df['target_id_hash'] = df.target_id_hash.cat.codes
+    # df['syndicator_id_hash'] = pd.Categorical(df['syndicator_id_hash'])
+    # df['syndicator_id_hash'] = df.syndicator_id_hash.cat.codes
+    # df['campaign_id_hash'] = pd.Categorical(df['campaign_id_hash'])
+    # df['campaign_id_hash'] = df.campaign_id_hash.cat.codes
+    # df['placement_id_hash'] = pd.Categorical(df['placement_id_hash'])
+    # df['placement_id_hash'] = df.placement_id_hash.cat.codes
+    # df['publisher_id_hash'] = pd.Categorical(df['publisher_id_hash'])
+    # df['publisher_id_hash'] = df.publisher_id_hash.cat.codes
+    # df['source_id_hash'] = pd.Categorical(df['source_id_hash'])
+    # df['source_id_hash'] = df.source_id_hash.cat.codes
+    #
+    # df['target_item_taxonomy'] = pd.Categorical(df['target_item_taxonomy'])
+    # df['target_item_taxonomy'] = df.target_item_taxonomy.cat.codes
+    # df['source_item_type'] = pd.Categorical(df['source_item_type'])
+    # df['source_item_type'] = df.source_item_type.cat.codes
+    # df['browser_platform'] = pd.Categorical(df['browser_platform'])
+    # df['browser_platform'] = df.browser_platform.cat.codes
+    # df['country_code'] = pd.Categorical(df['country_code'])
+    # df['country_code'] = df.country_code.cat.codes
+    # df['region'] = pd.Categorical(df['region'])
+    # df['region'] = df.region.cat.codes
+    # df['os_family'] = pd.Categorical(df['os_family'])
+    # df['os_family'] = df.os_family.cat.codes
+    #
+    # todo: We should  find how to use categorial data
+    # df.pop('user_id_hash')
+    # df.pop('target_id_hash')
+    # df.pop('syndicator_id_hash')
+    # df.pop('campaign_id_hash')
+    # df.pop('placement_id_hash')
+    # df.pop('publisher_id_hash')
+    # df.pop('source_id_hash')
+    # df.pop('target_item_taxonomy')
+    # df.pop('source_item_type')
+    # df.pop('browser_platform')
+    # df.pop('country_code')
+    # df.pop('region')
+    # df.pop('os_family')
 
-    df['day_of_week'] = pd.Categorical(df['day_of_week'])
-    df['day_of_week'] = df.day_of_week.cat.codes
-    # printDebug(str(df.info()))
-    # dataset = tf.data.Dataset.from_tensor_slices((df.values, target.values))# option to include X and target together
-    # train_dataset = dataset.shuffle(len(df)).batch(1)
+    # todo: consider keeping teh day of week as is
+    # df['day_of_week'] = pd.Categorical(df['day_of_week'])
+    # df['day_of_week'] = df.day_of_week.cat.codes
+    ##################################################
 
+    for column_name in categorical_columns:
+        df[column_name] = pd.Categorical(df[column_name])
+
+    dfForTargetEncoder = df[categorical_columns]
+
+    if (epochNum == 0):
+        # create a ce_target_encoder for every input filein teh first epoch
+        _, ce_target_encoder = target_encode(dfForTargetEncoder, target, categorical_columns)
+        ce_target_encoders.insert(ce_target_encoders.__len__(), ce_target_encoder)
+    else:
+        # calculate the target_encode for each file and add to the ANN
+        dfAccumulator = None
+        for ce_target_encoder in ce_target_encoders:
+            ce_target_encoder_res = ce_target_encoder.transform(dfForTargetEncoder)
+            if (dfAccumulator is None):
+                dfAccumulator = ce_target_encoder_res
+            else:
+                dfAccumulator = dfAccumulator + ce_target_encoder_res
+        ce_target_encoder_res = ce_target_encoder_res / ce_target_encoders.__len__()
+        df.pop('user_id_hash')
+        df.pop('target_id_hash')
+        df.pop('syndicator_id_hash')
+        df.pop('campaign_id_hash')
+        df.pop('placement_id_hash')
+        df.pop('publisher_id_hash')
+        df.pop('source_id_hash')
+        df.pop('target_item_taxonomy')
+        df.pop('source_item_type')
+        df.pop('browser_platform')
+        df.pop('country_code')
+        df.pop('region')
+        df.pop('os_family')
+        df.pop('day_of_week')
+        df = df.join(ce_target_encoder_res)
+
+    ##################################################
+    # remove time - we are not using a time series, and not distinguishing between sessios
     df.pop('page_view_start_time')
 
     # time + gmt_offset --> new time ; remove GMT // (save time.. ?)
@@ -512,23 +591,7 @@ def transformDataFramesToTFArr(df, target):
     # give more meaning to click rate differences
     df['user_click_rate_pow'] = (df['user_click_rate'] * 10).__pow__(2)
 
-    # todo: We should  find how to use categorial data
-    df.pop('user_id_hash')
-    df.pop('target_id_hash')
-    df.pop('syndicator_id_hash')
-    df.pop('campaign_id_hash')
-    df.pop('placement_id_hash')
-    df.pop('publisher_id_hash')
-    df.pop('source_id_hash')
-
-    # df.pop('target_item_taxonomy')
-    # df.pop('source_item_type')
-    # df.pop('browser_platform')
-    # df.pop('country_code')
-    # df.pop('region')
-    # df.pop('os_family')
-
-    printDebug("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
+    printDebug("featureEngeneering took[" + str(time.time() - fitBeginTime) + "]")
     if (target is None):
         return df.values, None
     else:
@@ -590,7 +653,7 @@ def predictOnTest():
         else:
             printDebug("Error - Check SVD status")
 
-    test, _ = transformDataFramesToTFArr(dfTest, None)
+    test, _ = featureEngeneering(dfTest, None)  # predictOnTest
     Predicted = model.predict(test)
     PredictedArr = np.array(Predicted)
     res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])

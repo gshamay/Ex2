@@ -11,6 +11,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.ensemble import RandomForestClassifier
 import category_encoders as ce
 from scipy import stats
+import lightgbm as lgb
 import numpy as np
 
 # todo: 2020-06-10 18:45:36.536587: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: AVX2
@@ -62,8 +63,8 @@ import numpy as np
 ###############################################################################################
 
 
-submit = False
-maxFiles = 6
+submit = True
+maxFiles = 10
 pd.options.display.width = 0
 
 
@@ -94,6 +95,8 @@ def readTrainData():
             i = i+1
 
     trainDf, testDf = train_test_split(df, train_size=0.99, random_state=seed)
+    trainDf = trainDf.dropna()  # todo: do we need this?
+    testDf = testDf.dropna()
     trainY = trainDf.pop('is_click')
     trainX = trainDf
     trainX, ce_target_encoder = preprocessData(trainX, trainY)
@@ -125,10 +128,12 @@ def preprocessData(df, y=None, ce_target_encoder=None):
     for column_name in categorical_columns:
         df[column_name] = pd.Categorical(df[column_name])
 
+    """""
     if ce_target_encoder==None:
         df, ce_target_encoder = target_encode(df, y, categorical_columns)
     else:
         df = ce_target_encoder.transform(df)
+    """
 
     print("transformDataToX_Y took[" + str(time.time() - fitBeginTime) + "]")
 
@@ -145,8 +150,6 @@ def preprocessData(df, y=None, ce_target_encoder=None):
     df['user_click_rate'] = (df['user_clicks'] + 1) / (df['user_recs'] + 1)
     df['user_click_rate_pow'] = np.power(df['user_click_rate'], 2)
 
-    df = df.dropna()  # todo: do we need this?
-
     # df['target_item_taxonomy_list'] = df.apply(lambda row : row['target_item_taxonomy'].split('~'), axis = 1)
     # categories = df['target_item_taxonomy_list'].tolist()
     # categories = sum(categories, [])
@@ -156,6 +159,8 @@ def preprocessData(df, y=None, ce_target_encoder=None):
                            'PETS', 'NEWS', 'FASHION', 'FOOTBALL']
     for column_name in taxonomy_categories:
         df[column_name] = [1 if column_name in x else 0 for x in df['target_item_taxonomy']]
+
+
 
     # df = pd.concat([df, df['target_item_taxonomy'].str.get_dummies('~').add_prefix('C_')], axis=1)
     # TODO: We should  find how to use this data
@@ -169,11 +174,40 @@ def preprocessData(df, y=None, ce_target_encoder=None):
     #df.pop('source_id_hash')
 
 
-    return df, ce_target_encoder
+    # return df, ce_target_encoder
+    return df, None
 
+def builedModel(trainX, trainY):
+    # return RandomForestClassifier(verbose=2, n_estimators=100, max_depth=max_depth, min_samples_split=min_samples_split, n_jobs=4)
+    categorical_features = ['user_id_hash', 'target_id_hash', 'syndicator_id_hash', 'campaign_id_hash',
+                           'placement_id_hash', 'publisher_id_hash', 'source_id_hash',
+                           'source_item_type', 'browser_platform', 'country_code', 'region',
+                           'os_family', 'day_of_week']
+    taxonomy_categories = ['LIFE', 'BUSINESS', 'ENTERTAINMENT', 'HEALTH', 'TECH', 'AUTOS', 'FOOD', 'SPORTS', 'MUSIC',
+                           'PETS', 'NEWS', 'FASHION', 'FOOTBALL']
+    categorical_features = categorical_features + taxonomy_categories
+    categorical_features = [c for c, col in enumerate(trainX.columns) if col in categorical_features]
+    train_data = lgb.Dataset(trainX, label=trainY, categorical_feature=categorical_features)
 
-def builedModel(max_depth, min_samples_split):
-    return RandomForestClassifier(verbose=2, n_estimators=100, max_depth=max_depth, min_samples_split=min_samples_split, n_jobs=4)
+    #
+    # Train the model
+    #
+
+    parameters = {
+        'objective': 'binary',
+        'metric': 'auc',
+        'boosting': 'gbdt',
+        'num_leaves': 31,
+        'feature_fraction': 0.5,
+        'bagging_fraction': 0.5,
+        'bagging_freq': 20,
+        'learning_rate': 0.05,
+        'verbose': 2
+    }
+    fitBeginTime = time.time()
+    model = lgb.train(parameters, train_data, num_boost_round=200)
+    print("Training model took[" + str(time.time() - fitBeginTime) + "]")
+    return model
 
 
 def trainModel(X, y, model):
@@ -246,9 +280,9 @@ def run():
     best_model = None
     for max_depth in [20]: #[8, 12, 20]:
         for min_samples_split in [5]: #[5, 10, 40]:
-            print('Max_depth: [' + str(max_depth) + ']   Min_samples_split: [' + str(min_samples_split) + ']')
-            model = builedModel(max_depth, min_samples_split)
-            model = trainModel(trainX, trainY, model)
+            #print('Max_depth: [' + str(max_depth) + ']   Min_samples_split: [' + str(min_samples_split) + ']')
+            model = builedModel(trainX, trainY)
+            # model = trainModel(trainX, trainY, model)
             auc = evaluateModel(testX, testY, model)
             if auc > best_auc:
                 best_auc = auc

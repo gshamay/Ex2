@@ -27,17 +27,17 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 5
-epochs = 2  # 2
-epochsOfBatch = 5  # 10
+numOfTests = 5 # 1 ; 5
+epochs = 2  # 1 ; 2
+epochsOfBatch = 1 # 1 ; 5
 test = True
-#test = False
+test = False
 limitNumOfFilesInTest = 3
 loadPercentageTest = 0.05
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 layers = [14, 9, 4]
 bEnableSVD = False
-bEnableSVD = True
+bEnableSVD = True # uncomment on run
 K = 400
 lam = 0.005
 delta = 0.02
@@ -380,11 +380,21 @@ def createDataFrameForSvdPredict(df):
     return test_set_svd_Predict
 
 
-def normalizeResults(x):
+def normalizeResultsEx(x):
     if (x < 0.38):
         return 0
     else:
         if (x > 0.62):
+            return 1
+        else:
+            return x
+
+
+def normalizeResults(x):
+    if (x < 0):
+        return 0
+    else:
+        if (x > 1):
             return 1
         else:
             return x
@@ -409,20 +419,25 @@ def evaluateModel(model, testX, testY):
 
     # main model (with or without SVD in to teh ANN)
     testX, testY = featureEngeneering(testX, testY)  # evaluadte model
-    testRes = model.predict(testX)
+    testRes = model.predict(testX)  # evaluate model
+    printDebug('test res : describe before normalizeResults' + str(stats.describe(testRes)))
+    testRes = np.vectorize(normalizeResults)(testRes.flatten())
+    printDebug('test res : describe after normalizeResults' + str(stats.describe(testRes)))
+
     m = tf.keras.metrics.AUC()
-    m.update_state(testY, testRes.flatten())
+    m.update_state(testY, testRes)
     AUC = m.result().numpy()
 
     # ensamble
     if (bSvdTrained):
-        ensambleRes = (testRes.flatten() + testResSvd) / 2
+        ensambleRes = (testRes + testResSvd) / 2
         m = tf.keras.metrics.AUC()
         m.update_state(testY, ensambleRes)
         AUCEnsamble = m.result().numpy()
 
     # Normalized version
-    normRes = np.vectorize(normalizeResults)(testRes.flatten())
+    normRes = np.vectorize(normalizeResultsEx)(testRes)
+    printDebug('test res : describe after normalizeResultsEx' + str(stats.describe(normRes)))
     m.reset_states()
     m.update_state(testY, normRes)
     AUCNorm = m.result().numpy()
@@ -658,9 +673,13 @@ def predictOnTest():
             printDebug("Error - Check SVD status")
 
     test, _ = featureEngeneering(dfTest, None)  # predictOnTest
-    Predicted = model.predict(test)
+    Predicted = model.predict(test)  # predict on test file
+    printDebug('test res : describe' + str(stats.describe(Predicted)))
     PredictedArr = np.array(Predicted)
-    res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr.flatten())}, columns=['Id', 'Predicted'])
+    printDebug('test res : describe before normalizeResults' + str(stats.describe(PredictedArr)))
+    PredictedArr = np.vectorize(normalizeResults)(PredictedArr.flatten())
+    printDebug('test res : describe after normalizeResults' + str(stats.describe(PredictedArr)))
+    res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr)}, columns=['Id', 'Predicted'])
     res.Id = res.Id.astype(int)
     resFileName = "./models/model_" + str(runStartTime) + "_res.csv"
     res.to_csv(resFileName, header=True, index=False)

@@ -9,7 +9,6 @@ from io import StringIO
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 from sklearn.ensemble import RandomForestClassifier
-
 import category_encoders as ce
 from scipy import stats
 import numpy as np
@@ -20,30 +19,16 @@ import numpy as np
 #  DONE: Check why do we have each time two rows of AUC one is always 0.73, while the other is always 0.99889
 #  DONE: Check why we run our tree few times - it should be trained only once
 #  DONE (no information provided about baseline): Check how baseline is calculated
-#  Make tuning to parameters
-#  Try Logistic Regression
-#  Try LightGBM or XGBoost instead of RandomForest
-#  Try to parse column target_item_taxonomy
 #  DONE: Try use columns with 'hash' ending
+#  Try to parse column target_item_taxonomy
 #  Check if os_family is really categorical
-#  Try cut time_of_day to morning, evening, day, night
-#
-# todo: Plan / feature engeneering\
-#  DONE - consider remove first time value
-#  DONE - time + gmt_offset --> new time ; remove GMT // (save time.. ?)
-#  Done - calculate user click rate #  user -> targets + num seen #user that cliced more then once --> may click it again
-#  DONE - find how to use this data w/o harming the accuracy - try to remove user / target / anything that is not common
-#  Change the target to categorial and not numerical
-#  helper data for the domain
-#  target -> total seen + time # taret that is popular (and seen lately ? )
-#  target + data --> Target CF
-#  session based mechanism
-#  date/time  --> date features
-#  emphesize the connection between    user_recs    user_clicks    user_target_recs
-#  one may be removed browser_platform and os_family // (save time..?)
+#  Try cut time_of_day to morning, evening, day, night - check how to divide according to corelation with is_click
+#  Try Logistic Regression
+#  Make the same trick as taxonomy with 'hash' columns that have heavy categories: create function that extracts top 10 categories
+#  Make tuning to parameters
+#  Try LightGBM or XGBoost instead of RandomForest
 ###########################################################################
-# parameters for Debug
-# Todo: in Debug - change here
+
 
 ####################################################################################
 # the DATA
@@ -77,8 +62,8 @@ import numpy as np
 ###############################################################################################
 
 
-submit = True
-maxFiles = 10
+submit = False
+maxFiles = 6
 pd.options.display.width = 0
 
 
@@ -108,7 +93,7 @@ def readTrainData():
             print("file: " + str(i) + " handle time[" + str(time.time() - fileBeginTime)+ "]")
             i = i+1
 
-    trainDf, testDf = train_test_split(df, test_size=0.99, random_state=seed)
+    trainDf, testDf = train_test_split(df, train_size=0.99, random_state=seed)
     trainY = trainDf.pop('is_click')
     trainX = trainDf
     trainX, ce_target_encoder = preprocessData(trainX, trainY)
@@ -119,7 +104,7 @@ def readTrainData():
     testX, ce_target_encoder = preprocessData(testX, ce_target_encoder=ce_target_encoder)
     print(testX.describe())
     print("Number of rows in train: " + str(trainX.shape[0]))
-    print("Epoch time[" + str(time.time() - beginTime) + "]")
+    print("Time taken: [" + str(time.time() - beginTime) + "]")
     return trainX, testX, trainY, testY, ce_target_encoder
 
 
@@ -132,8 +117,9 @@ def target_encode(X, y, categorical_columns):
 
 def preprocessData(df, y=None, ce_target_encoder=None):
     fitBeginTime = time.time()
+    df['os_is_six'] = [1 if x == 6 else 0 for x in df['os_family']]
     categorical_columns = ['user_id_hash', 'target_id_hash', 'syndicator_id_hash', 'campaign_id_hash',
-                           'target_item_taxonomy', 'placement_id_hash', 'publisher_id_hash', 'source_id_hash',
+                           'placement_id_hash', 'publisher_id_hash', 'source_id_hash',
                            'source_item_type', 'browser_platform', 'country_code', 'region',
                            'os_family', 'day_of_week']
     for column_name in categorical_columns:
@@ -148,6 +134,9 @@ def preprocessData(df, y=None, ce_target_encoder=None):
 
     df.pop('page_view_start_time')
 
+    df['night'] = [1 if x<=6 else 0 for x in df['time_of_day']]
+    df['evening'] = [1 if x >= 17 else 0 for x in df['time_of_day']]
+
     # time + gmt_offset --> new time ; remove GMT // (save time.. ?)
     df['time_of_day'] = df['time_of_day'] + (df['gmt_offset'] / 100.0)
     df.pop('gmt_offset')
@@ -156,6 +145,19 @@ def preprocessData(df, y=None, ce_target_encoder=None):
     df['user_click_rate'] = (df['user_clicks'] + 1) / (df['user_recs'] + 1)
     df['user_click_rate_pow'] = np.power(df['user_click_rate'], 2)
 
+    df = df.dropna()  # todo: do we need this?
+
+    # df['target_item_taxonomy_list'] = df.apply(lambda row : row['target_item_taxonomy'].split('~'), axis = 1)
+    # categories = df['target_item_taxonomy_list'].tolist()
+    # categories = sum(categories, [])
+    # freqs = {i: categories.count(i) for i in set(categories)}
+    # sorted_freqs = sorted(freqs.items(), key=lambda x: x[1], reverse=True)
+    taxonomy_categories = ['LIFE', 'BUSINESS', 'ENTERTAINMENT', 'HEALTH', 'TECH', 'AUTOS', 'FOOD', 'SPORTS', 'MUSIC',
+                           'PETS', 'NEWS', 'FASHION', 'FOOTBALL']
+    for column_name in taxonomy_categories:
+        df[column_name] = [1 if column_name in x else 0 for x in df['target_item_taxonomy']]
+
+    # df = pd.concat([df, df['target_item_taxonomy'].str.get_dummies('~').add_prefix('C_')], axis=1)
     # TODO: We should  find how to use this data
     df.pop('target_item_taxonomy')
     #df.pop('user_id_hash')
@@ -166,13 +168,12 @@ def preprocessData(df, y=None, ce_target_encoder=None):
     #df.pop('publisher_id_hash')
     #df.pop('source_id_hash')
 
-    df = df.dropna()  # todo: do we need this?
 
     return df, ce_target_encoder
 
 
 def builedModel(max_depth, min_samples_split):
-    return RandomForestClassifier(verbose=2, n_estimators=300, max_depth=max_depth, min_samples_split=min_samples_split, n_jobs=4)
+    return RandomForestClassifier(verbose=2, n_estimators=100, max_depth=max_depth, min_samples_split=min_samples_split, n_jobs=4)
 
 
 def trainModel(X, y, model):
@@ -243,8 +244,8 @@ def run():
 
     best_auc = 0
     best_model = None
-    for max_depth in [8, 12, 20]:
-        for min_samples_split in [5, 10, 40]:
+    for max_depth in [20]: #[8, 12, 20]:
+        for min_samples_split in [5]: #[5, 10, 40]:
             print('Max_depth: [' + str(max_depth) + ']   Min_samples_split: [' + str(min_samples_split) + ']')
             model = builedModel(max_depth, min_samples_split)
             model = trainModel(trainX, trainY, model)

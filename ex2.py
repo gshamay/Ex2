@@ -27,21 +27,28 @@ from surprise import accuracy
 ###########################################################################
 # parameters for Debug
 # Todo: in Debug - change here
-numOfTests = 5 # 1 ; 5
-epochs = 2  # 1 ; 2
-epochsOfBatch = 1 # 1 ; 5
 test = True
-test = False
-limitNumOfFilesInTest = 3
-loadPercentageTest = 0.05
+# test = False
+
 basePath = "C:\\Users\\gshamay.DALET\\PycharmProjects\\RS\\Ex2\\models\\"
 layers = [14, 9, 4]
 bEnableSVD = False
-bEnableSVD = True # uncomment on run
+bEnableSVD = True  # uncomment on run
+
 K = 400
 lam = 0.005
 delta = 0.02
-bAddSvdToAnn = False
+bAddSvdToAnn = True
+numOfTests = 5  # 1 ; 5
+epochs = 2  # 1 ; 2
+epochsOfBatch = 5  # 1 ; 5
+if (test):
+    numOfTests = 1  # 1 ; 5
+    epochs = 2  # 1 ; 2
+    epochsOfBatch = 1  # 1 ; 5
+
+limitNumOfFilesInTest = 4
+loadPercentageTest = 0.05
 ###########################################################################
 # todo: Plan / feature engeneering\
 #  DONE - consider remove first time value
@@ -112,7 +119,10 @@ categorical_columns = ['user_id_hash', 'target_id_hash', 'syndicator_id_hash', '
                        'source_item_type', 'browser_platform', 'country_code', 'region',
                        'os_family', 'day_of_week']
 
-input_dim = 22
+taxonomy_categories = ['LIFE', 'BUSINESS', 'ENTERTAINMENT', 'HEALTH', 'TECH', 'AUTOS', 'FOOD', 'SPORTS', 'MUSIC',
+                       'PETS', 'NEWS', 'FASHION', 'FOOTBALL']
+
+input_dim = 35
 if (bEnableSVD):
     if (bAddSvdToAnn):
         input_dim = input_dim + 1  # the input of the SVD out to the ANN
@@ -229,7 +239,13 @@ def readAndRunZipFiles():
         if ("part-" in file.filename and ".csv" in file.filename):
             fileBeginTime = time.time()
             df = readCSVFromZip(archive, file)
-            df = df.sample(frac=1)  # shuffle the data
+
+            if ((limitNumOfFilesInTest > 0) and (limitNumOfFilesInTest <= numOffilesInEpoch)):
+                xCopy = df.copy()
+                yCopy = xCopy.pop('is_click')
+                evaluateModel(model, xCopy, yCopy)  # eval on last file in the epoch
+
+            # df = df.sample(frac=1)  # shuffle the data
             bLearnOnChunk = (not test) or \
                             ((limitNumOfFilesInTest > 1) and
                              (limitNumOfFilesInTest >= numOffilesInEpoch + 1))
@@ -259,6 +275,9 @@ def readAndRunZipFiles():
     # test each epoch - using the last read file any way - in test mode this file is not being trained on and in production it is
     if (totalLines > 0):
         # after every epoch - evaluate teh last trained file
+        print("eval on last file in the epoch")
+        predictOnTest("epoch" + str(epochNum))
+
         xCopy = df.copy()
         yCopy = xCopy.pop('is_click')
         evaluateModel(model, xCopy, yCopy)  # eval on last file in the epoch
@@ -357,7 +376,7 @@ def trainSVDWithCurrentDataChunk(X, Y):
 def createDataFrameForSvdTrain(X, Y):
     train_svd_data = {
         'user_id_hash': X['user_id_hash'],
-        'target_id_hash': X['target_id_hash'],
+        'target_id_hash': X['campaign_id_hash'],
         'user_target_recs': X['user_target_recs'],
         'is_click': Y
     }
@@ -408,6 +427,7 @@ def evaluateModel(model, testX, testY):
     AUCSVD = 0
     AUCEnsamble = 0
     if (bSvdTrained):
+        printDebug("eval SVD")
         xCopy = testX.copy()
         yCopy = testY.copy()
         testResSvd = predictWithSVD(SVDModel, xCopy)
@@ -420,9 +440,11 @@ def evaluateModel(model, testX, testY):
     # main model (with or without SVD in to teh ANN)
     testX, testY = featureEngeneering(testX, testY)  # evaluadte model
     testRes = model.predict(testX)  # evaluate model
-    printDebug('test res : describe before normalizeResults' + str(stats.describe(testRes)))
+    testRes = np.nan_to_num(testRes)
+
+    printDebug('test res : describe before normalizeResults ' + str(stats.describe(testRes)))
     testRes = np.vectorize(normalizeResults)(testRes.flatten())
-    printDebug('test res : describe after normalizeResults' + str(stats.describe(testRes)))
+    printDebug('test res : describe after normalizeResults ' + str(stats.describe(testRes)))
 
     m = tf.keras.metrics.AUC()
     m.update_state(testY, testRes)
@@ -437,7 +459,7 @@ def evaluateModel(model, testX, testY):
 
     # Normalized version
     normRes = np.vectorize(normalizeResultsEx)(testRes)
-    printDebug('test res : describe after normalizeResultsEx' + str(stats.describe(normRes)))
+    printDebug('test res : describe after normalizeResultsEx ' + str(stats.describe(normRes)))
     m.reset_states()
     m.update_state(testY, normRes)
     AUCNorm = m.result().numpy()
@@ -464,7 +486,7 @@ def readCSVFromZip(archive, file):
     s = str(fileData, 'utf-8')
     data = StringIO(s)
     df = pd.read_csv(data)
-    printDebug("read Zip file took [" + str(time.time() - readBeginTime) + "]numOffiles[" + str(
+    printDebug("read [" + file.filename + " ] took [" + str(time.time() - readBeginTime) + "]numOffiles[" + str(
         numOffiles) + "]numOffilesInEpoch[" + str(numOffilesInEpoch) + "]")
     return df
 
@@ -561,8 +583,15 @@ def featureEngeneering(df, target):
     # df['day_of_week'] = pd.Categorical(df['day_of_week'])
     # df['day_of_week'] = df.day_of_week.cat.codes
     ##################################################
+    # add one hot for the target_item_taxonomy
+    for column_name in taxonomy_categories:
+        df[column_name] = [1 if column_name in x else 0 for x in df['target_item_taxonomy']]
+
+    ##################################################
 
     for column_name in categorical_columns:
+       # if (column_name != 'user_id_hash'):
+       #     df[column_name] = df['user_id_hash'] + df[column_name]  # crate the categorials per user
         df[column_name] = pd.Categorical(df[column_name])
 
     dfForTargetEncoder = df[categorical_columns]
@@ -576,11 +605,13 @@ def featureEngeneering(df, target):
         dfAccumulator = None
         for ce_target_encoder in ce_target_encoders:
             ce_target_encoder_res = ce_target_encoder.transform(dfForTargetEncoder)
+
             if (dfAccumulator is None):
                 dfAccumulator = ce_target_encoder_res
             else:
                 dfAccumulator = dfAccumulator + ce_target_encoder_res
         ce_target_encoder_res = ce_target_encoder_res / ce_target_encoders.__len__()
+
         df.pop('user_id_hash')
         df.pop('target_id_hash')
         df.pop('syndicator_id_hash')
@@ -650,7 +681,7 @@ def builedModel():
     model.compile(loss=loss, optimizer=optimizer, metrics=METRICS)
 
 
-def predictOnTest():
+def predictOnTest(suffux):
     global model
     testFilewName = "./testData/test_file.csv"
     printDebug("predictOnTest [" + testFilewName + "]")
@@ -667,21 +698,23 @@ def predictOnTest():
             # write SVD res to file
             res = pd.DataFrame({'Id': IDs, 'Predicted': testResSvd}, columns=['Id', 'Predicted'])
             res.Id = res.Id.astype(int)
-            resFileName = "./models/modelSvd_" + str(runStartTime) + "_res.csv"
+            resFileName = "./models/modelSvd_" + suffux + "_" + str(runStartTime) + "_res.csv"
             res.to_csv(resFileName, header=True, index=False)
         else:
             printDebug("Error - Check SVD status")
 
     test, _ = featureEngeneering(dfTest, None)  # predictOnTest
     Predicted = model.predict(test)  # predict on test file
+    Predicted = np.nan_to_num(Predicted)
+
     printDebug('test res : describe' + str(stats.describe(Predicted)))
     PredictedArr = np.array(Predicted)
     printDebug('test res : describe before normalizeResults' + str(stats.describe(PredictedArr)))
     PredictedArr = np.vectorize(normalizeResults)(PredictedArr.flatten())
-    printDebug('test res : describe after normalizeResults' + str(stats.describe(PredictedArr)))
+    printDebug('test res : describe after normalizeResults ' + str(stats.describe(PredictedArr)))
     res = pd.DataFrame({'Id': IDs, 'Predicted': list(PredictedArr)}, columns=['Id', 'Predicted'])
     res.Id = res.Id.astype(int)
-    resFileName = "./models/model_" + str(runStartTime) + "_res.csv"
+    resFileName = "./models/model_" + suffux + "_" + str(runStartTime) + "_res.csv"
     res.to_csv(resFileName, header=True, index=False)
 
     # ensamble
@@ -690,7 +723,7 @@ def predictOnTest():
         # write ensamble res to file
         res = pd.DataFrame({'Id': IDs, 'Predicted': ensambleRes}, columns=['Id', 'Predicted'])
         res.Id = res.Id.astype(int)
-        resFileName = "./models/modelEnsamble_" + str(runStartTime) + "_res.csv"
+        resFileName = "./models/modelEnsamble_" + suffux + "_" + str(runStartTime) + "_res.csv"
         res.to_csv(resFileName, header=True, index=False)
 
 
@@ -726,7 +759,7 @@ def run():
 
         saveModel()
         # loaded_model = tf.keras.models.load_model('./MyModel_tf')
-        predictOnTest()
+        predictOnTest("final")
 
 
 run()

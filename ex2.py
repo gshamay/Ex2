@@ -48,7 +48,7 @@ if (test):
     epochsOfBatch = 1  # 1 ; 5
 
 limitNumOfFilesInTest = 4
-loadPercentageTest = 0.05
+loadPercentageTest = 0.7
 ###########################################################################
 # todo: Plan / feature engeneering\
 #  DONE - consider remove first time value
